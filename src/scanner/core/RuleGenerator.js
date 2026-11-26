@@ -147,13 +147,20 @@ export class RuleGenerator {
     );
     this.detectedIntegrations = integrations;
 
-    // Load Rules
-    let standardizedRules = await this.blueprintLoader.fetchFromRepository(
-      analysisData,
-      'rules',
-      null,
-      categoryFilter
-    );
+    // Migration mode: deploy the user's ACTUAL migrated context content rather
+    // than regenerating generic templates over it. The migration manager passes
+    // the adapted contexts as analysisData.patterns.migrationContexts.
+    let standardizedRules = this.rulesFromMigrationContexts(analysisData);
+
+    // Load Rules (non-migration path)
+    if (standardizedRules.length === 0) {
+      standardizedRules = await this.blueprintLoader.fetchFromRepository(
+        analysisData,
+        'rules',
+        null,
+        categoryFilter
+      );
+    }
     if (standardizedRules.length === 0) {
       standardizedRules = await this.blueprintLoader.loadStandardizedRules(analysisData);
     }
@@ -191,6 +198,55 @@ export class RuleGenerator {
     }
 
     return results;
+  }
+
+  /**
+   * Convert migrated AI contexts (passed by the migration manager as
+   * analysisData.patterns.migrationContexts) into the standardized rule shape
+   * consumed by the platform adapters. This ensures the user's REAL migrated
+   * content is deployed to target files instead of regenerated generic rules.
+   *
+   * @param {Object} analysisData
+   * @returns {Array} Standardized rules, or [] when not in migration mode
+   */
+  rulesFromMigrationContexts(analysisData) {
+    const migrationContexts = analysisData?.patterns?.migrationContexts;
+    if (!Array.isArray(migrationContexts) || migrationContexts.length === 0) {
+      return [];
+    }
+
+    if (this.verbose) {
+      console.log(
+        chalk.gray(`Using ${migrationContexts.length} migrated context(s) as deployment source`)
+      );
+    }
+
+    return migrationContexts
+      .filter(context => context && typeof context.content === 'string')
+      .map(context => {
+        const platformConfig =
+          context.platforms && typeof context.platforms === 'object' ? context.platforms : {};
+
+        return {
+          name: context.id || context.title || 'migrated-context',
+          filePath: context.migration?.originalPath || context.id,
+          frontmatter: {
+            id: context.id,
+            title: context.title,
+            description: context.description,
+            category: context.category || 'core',
+            kind: context.kind,
+            alwaysApply: context.category === 'core',
+            platforms: platformConfig,
+            tags: context.tags,
+            migration: context.migration,
+          },
+          content: context.content,
+          // Preserve the original adapted platform config so adapters can honor
+          // platform-specific intent from the migration.
+          platforms: platformConfig,
+        };
+      });
   }
 
   async generateEnhancedRules(analysisData) {

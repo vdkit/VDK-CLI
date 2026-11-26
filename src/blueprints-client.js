@@ -87,7 +87,7 @@ function isPlatformEnabled(platformConfig) {
     return false;
   }
 
-  if (platformConfig.compatible === false || platformConfig.enabled === false) {
+  if (platformConfig.enabled === false) {
     return false;
   }
 

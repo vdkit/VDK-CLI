@@ -154,7 +154,7 @@ export class ClaudeCodeAdapter extends RuleAdapter {
     if (this.ruleGenerator?.fetchFromRepository) {
       try {
         console.log('🔍 Fetching technology-specific rules for Claude Code CLI...');
-        // Use the full projectContext as analysisData since it contains technologyData
+        // Use the full projectContext as analysisData since it contains the detected tech stack
         technologyRules = await this.ruleGenerator.fetchFromRepository(
           projectContext,
           'rules',
@@ -191,8 +191,7 @@ export class ClaudeCodeAdapter extends RuleAdapter {
    */
   async generateCorrectClaudeMainMemory(_rules, projectContext, technologyRules = []) {
     const projectName = projectContext.name || path.basename(this.projectPath);
-    // Handle both techStack and technologyData structure
-    const techData = projectContext.techStack || projectContext.technologyData || {};
+    const techData = projectContext.techStack || {};
     const frameworks = techData.frameworks || [];
     const languages = techData.primaryLanguages || [];
     const libraries = techData.libraries || [];
@@ -293,8 +292,7 @@ ${technologyGuidelines}
     }
 
     const guidelines = [];
-    // Handle both techStack and technologyData structure
-    const techData = projectContext.techStack || projectContext.technologyData || {};
+    const techData = projectContext.techStack || {};
     const frameworks = techData.frameworks || [];
     const languages = techData.primaryLanguages || [];
 
@@ -585,7 +583,7 @@ ${technologyGuidelines}
    * Check if the project is a web project (Next.js, React web, etc.)
    */
   isWebProject(projectContext) {
-    const techData = projectContext.techStack || projectContext.technologyData || {};
+    const techData = projectContext.techStack || {};
     const frameworks = techData.frameworks || [];
 
     return frameworks.some(framework => {
@@ -1050,7 +1048,7 @@ ${technologyGuidelines}
   }
 
   async detectBuildTool(projectContext) {
-    const techData = projectContext.techStack || projectContext.technologyData || {};
+    const techData = projectContext.techStack || {};
     const frameworks = techData.frameworks || [];
 
     // Check for turbopack in Next.js projects

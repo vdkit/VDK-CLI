@@ -17,6 +17,7 @@ import path from 'node:path';
 import chalk from 'chalk';
 import matter from 'gray-matter';
 import ora from 'ora';
+import { equivalenceEvaluator } from '../blueprints/equivalence/EquivalenceEvaluator.js';
 import { createIntegrationManager } from '../integrations/index.js';
 // Use existing VDK components
 import { ProjectScanner } from '../scanner/core/ProjectScanner.js';
@@ -64,6 +65,7 @@ export class MigrationManager {
       deployed: { successful: [], failed: [], integrations: [] },
       failed: [],
       skipped: [],
+      equivalence: { lossless: 0, lossy: 0, unsupported: 0 },
     };
   }
 
@@ -109,6 +111,10 @@ export class MigrationManager {
         projectData,
         techData,
       });
+
+      // Step 4b: Evaluate round-trip semantic equivalence for each adapted
+      // context against its target platforms and record equivalenceOutcome.
+      this.evaluateEquivalence(adaptedContexts.successful);
 
       this.results.converted = adaptedContexts.successful;
       this.results.failed = adaptedContexts.failed;
@@ -160,6 +166,77 @@ export class MigrationManager {
   }
 
   /**
+   * Evaluate round-trip semantic equivalence for each adapted context against
+   * the platforms it targets. Records `equivalenceOutcome` (lossless | lossy |
+   * unsupported) and per-platform detail on each context, and tracks an
+   * aggregate summary on the migration results.
+   * @param {Array} adaptedContexts Adapted contexts
+   */
+  evaluateEquivalence(adaptedContexts) {
+    const summary = { lossless: 0, lossy: 0, unsupported: 0 };
+
+    for (const context of adaptedContexts) {
+      const platformIds = Object.keys(context.platforms || {});
+      if (platformIds.length === 0) {
+        continue;
+      }
+
+      // Build the minimal blueprint shape the evaluator consumes.
+      const blueprint = {
+        platforms: context.platforms,
+        metadata: {
+          kind: context.kind,
+          tools: context.tools,
+          triggers: context.triggers,
+        },
+        source: { content: context.content || '' },
+      };
+
+      const perPlatform = {};
+      const outcomes = [];
+
+      for (const platformId of platformIds) {
+        try {
+          const result = equivalenceEvaluator.evaluateBlueprintForPlatform(blueprint, platformId);
+          perPlatform[platformId] = result.outcome;
+          outcomes.push(result.outcome);
+        } catch (error) {
+          perPlatform[platformId] = 'unsupported';
+          outcomes.push('unsupported');
+          if (this.verbose) {
+            console.warn(
+              chalk.yellow(`Equivalence check failed for ${platformId}: ${error.message}`)
+            );
+          }
+        }
+      }
+
+      // Worst-case outcome across platforms is the context's overall outcome.
+      const overall = outcomes.includes('unsupported')
+        ? 'unsupported'
+        : outcomes.includes('lossy')
+          ? 'lossy'
+          : 'lossless';
+
+      context.equivalenceOutcome = overall;
+      context.equivalence = perPlatform;
+      summary[overall] = (summary[overall] || 0) + 1;
+    }
+
+    this.results.equivalence = summary;
+
+    if (this.verbose) {
+      console.log(
+        chalk.gray(
+          `Equivalence: ${summary.lossless} lossless, ${summary.lossy} lossy, ${summary.unsupported} unsupported`
+        )
+      );
+    }
+
+    return summary;
+  }
+
+  /**
    * Generate VDK blueprints from adapted contexts using existing RuleGenerator
    * @param {Array} adaptedContexts Adapted contexts
    * @param {Object} options Generation options
@@ -179,7 +256,7 @@ export class MigrationManager {
         directoryCount: projectData.directories?.length || 0,
         fileTypes: projectData.fileTypes,
       },
-      technologyData: techData,
+      techStack: techData,
       patterns: { migrationContexts: adaptedContexts }, // Pass contexts as patterns
       outputPath: this.outputPath,
       migrationMode: true, // Flag to indicate migration mode
@@ -397,7 +474,8 @@ export class MigrationManager {
       console.log(chalk.yellow(`• Would fail: ${this.results.failed.length} conversions`));
       console.log('\nFailure details:');
       this.results.failed.forEach(failure => {
-        console.log(`  • ${failure.context.relativePath}: ${failure.error}`);
+        const filePath = failure.context?.filePath || failure.context?.relativePath || 'unknown';
+        console.log(`  • ${filePath}: ${failure.error}`);
       });
     }
 
@@ -414,24 +492,6 @@ export class MigrationManager {
     }
 
     console.log(chalk.gray('\nRun without --dry-run to perform actual migration.'));
-  }
-
-  /**
-   * Show dry run results
-   */
-  showDryRunResults() {
-    console.log(chalk.blue('\n🔍 Dry Run Results:'));
-    console.log(`• Would detect: ${this.results.detected.length} AI contexts`);
-    console.log(`• Would convert: ${this.results.converted.length} contexts`);
-
-    if (this.results.failed.length > 0) {
-      console.log(chalk.yellow(`• Would fail: ${this.results.failed.length} conversions`));
-      console.log('\\nFailure details:');
-      this.results.failed.forEach(failure => {
-        const filePath = failure.context?.filePath || failure.context?.relativePath || 'unknown';
-        console.log(`  • ${filePath}: ${failure.error}`);
-      });
-    }
   }
 
   /**

@@ -21,8 +21,8 @@ export class RuleDetector {
         confidence: 'high',
       },
       cursor: {
-        patterns: ['.cursor/**/*', '.cursorrules', 'cursorrules', '.cursor-rules'],
-        indicators: ['.cursorrules', '.cursor/', 'cursor', '@'],
+        patterns: ['.cursor/**/*'],
+        indicators: ['.cursor/', 'cursor', '@'],
         confidence: 'high',
       },
       'github-copilot': {
@@ -147,7 +147,7 @@ export class RuleDetector {
     }
     if (fileName === 'manifest.json' && lowerFilePath.includes('/.acp/')) return 'acp';
     if (fileName === 'SKILL.md' || fileName === 'skill.md') return 'claude-skill';
-    if (['.cursorrules', 'cursorrules', '.cursor-rules'].includes(fileName)) return 'cursor';
+    if (fileName.endsWith('.mdc') && lowerFilePath.includes('/.cursor/')) return 'cursor';
     if (fileName.startsWith('.copilotrc')) return 'github-copilot';
     if (fileName.startsWith('.windsurfrc') || fileName.startsWith('windsurf.config')) {
       return 'windsurf';
@@ -557,7 +557,7 @@ export class RuleDetector {
 
     // Boost for exact file name matches
     if (fileName === 'CLAUDE.md' && contextType === 'claude-code-cli') score += 20;
-    if (['.cursorrules', 'cursorrules'].includes(fileName) && contextType === 'cursor') score += 20;
+    if (fileName.endsWith('.mdc') && contextType === 'cursor') score += 20;
     if (fileName.startsWith('.copilotrc') && contextType === 'github-copilot') score += 15;
     if ((fileName === 'ACP.md' || fileName === 'acp.md') && contextType === 'acp') score += 20;
 

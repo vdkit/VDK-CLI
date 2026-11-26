@@ -61,23 +61,9 @@ Required permissions: public_repo, read:user`);
     return this.octokit.rest || this.octokit;
   }
 
-  /**
-   * Backward-compatible repository validation API.
-   */
   async validateRepository() {
     await this.initialize();
     const api = this.getApi();
-
-    if (!api?.repos?.get) {
-      if (
-        String(this.repoOwner).toLowerCase().includes('nonexistent') ||
-        String(this.repoName).toLowerCase().includes('nonexistent')
-      ) {
-        throw new Error('Repository not found');
-      }
-
-      throw new Error('Network error');
-    }
 
     const { data } = await api.repos.get({
       owner: this.repoOwner,
@@ -87,19 +73,9 @@ Required permissions: public_repo, read:user`);
     return data;
   }
 
-  /**
-   * Backward-compatible fork API.
-   */
   async forkRepository() {
     await this.initialize();
     const api = this.getApi();
-
-    if (!api?.repos?.createFork) {
-      return {
-        full_name: 'user/repo',
-        clone_url: 'https://github.com/user/repo.git',
-      };
-    }
 
     const { data } = await api.repos.createFork({
       owner: this.repoOwner,
@@ -109,23 +85,9 @@ Required permissions: public_repo, read:user`);
     return data;
   }
 
-  /**
-   * Backward-compatible PR API for comprehensive tests.
-   */
   async createPR({ title, description, head, base, changes = [] }) {
     await this.initialize();
     const api = this.getApi();
-
-    if (!api?.pulls?.create) {
-      return {
-        number: 123,
-        html_url: `https://github.com/${this.repoOwner}/${this.repoName}/pull/123`,
-        title: title || 'Pull Request',
-        body: description || '',
-        head,
-        base: base || this.baseBranch,
-      };
-    }
 
     // Optionally stage content updates before opening PR.
     for (const change of changes) {

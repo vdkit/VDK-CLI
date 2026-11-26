@@ -208,7 +208,7 @@ export class MigrationAdapter {
       content: this.organizeContent(context),
       platforms: {
         'claude-code-cli': {
-          compatible: true,
+          enabled: true,
           memory: true,
           mcpIntegration: claudeSpecific?.hasMCPReferences,
           allowedTools: this.extractAllowedTools(context),
@@ -225,21 +225,22 @@ export class MigrationAdapter {
    */
   async adaptCursor(context, _projectContext) {
     const { cursorSpecific } = context;
-    const isCursorRules = ['.cursorrules', 'cursorrules'].includes(context.fileName);
+    const isProjectRule =
+      context.fileName.endsWith('.mdc') && context.relativePath?.includes('.cursor/rules/');
 
     return {
-      category: isCursorRules ? 'core' : 'language',
-      scope: isCursorRules ? 'project' : 'component',
+      category: isProjectRule ? 'core' : 'language',
+      scope: isProjectRule ? 'project' : 'component',
       content: this.organizeContent(context),
       platforms: {
         cursor: {
-          compatible: true,
-          activation: isCursorRules ? 'always' : 'auto-attached',
+          enabled: true,
+          activation: isProjectRule ? 'always' : 'auto-attached',
           globs: cursorSpecific?.hasFileGlobs ? this.extractGlobs(context) : ['**/*'],
-          priority: isCursorRules ? 'high' : 'medium',
+          priority: isProjectRule ? 'high' : 'medium',
         },
         'claude-code-cli': {
-          compatible: true,
+          enabled: true,
           memory: true,
         },
       },
@@ -265,7 +266,7 @@ export class MigrationAdapter {
       content: this.organizeContent(context),
       platforms: {
         'github-copilot': {
-          compatible: true,
+          enabled: true,
           priority: copilotSpecific?.hasSecurityRules ? 9 : 7,
           reviewType: copilotSpecific?.hasSecurityRules
             ? 'security'
@@ -274,16 +275,16 @@ export class MigrationAdapter {
               : 'style',
         },
         vscode: {
-          compatible: true,
+          enabled: true,
         },
         'vscode-insiders': {
-          compatible: true,
+          enabled: true,
         },
         vscodium: {
-          compatible: true,
+          enabled: true,
         },
         'claude-code-cli': {
-          compatible: true,
+          enabled: true,
           memory: true,
         },
       },
@@ -304,13 +305,13 @@ export class MigrationAdapter {
       content: this.organizeContent(context),
       platforms: {
         windsurf: {
-          compatible: true,
+          enabled: true,
           mode: 'workspace',
           xmlTag: this.extractXMLTag(context),
           characterLimit: Math.max(context.wordCount * 6, 1000), // Estimate character count
         },
         'claude-code-cli': {
-          compatible: true,
+          enabled: true,
           memory: true,
         },
       },
@@ -329,11 +330,11 @@ export class MigrationAdapter {
       content: this.organizeContent(context),
       platforms: {
         'claude-code-cli': {
-          compatible: true,
+          enabled: true,
           memory: true,
         },
         cursor: {
-          compatible: true,
+          enabled: true,
           activation: 'manual',
           priority: 'low',
         },
@@ -353,13 +354,13 @@ export class MigrationAdapter {
       content: this.organizeContent(context),
       platforms: {
         'openai-codex': {
-          compatible: true,
+          enabled: true,
         },
         opencode: {
-          compatible: true,
+          enabled: true,
         },
         goose: {
-          compatible: true,
+          enabled: true,
         },
       },
     };
@@ -377,10 +378,10 @@ export class MigrationAdapter {
       content: this.organizeContent(context),
       platforms: {
         'gemini-cli': {
-          compatible: true,
+          enabled: true,
         },
         'google-antigravity': {
-          compatible: true,
+          enabled: true,
         },
       },
     };
@@ -398,10 +399,10 @@ export class MigrationAdapter {
       content: this.organizeContent(context),
       platforms: {
         opencode: {
-          compatible: true,
+          enabled: true,
         },
         'openai-codex': {
-          compatible: true,
+          enabled: true,
         },
       },
     };
@@ -419,11 +420,11 @@ export class MigrationAdapter {
       content: this.organizeContent(context),
       platforms: {
         'claude-code-cli': {
-          compatible: true,
+          enabled: true,
           memory: true,
         },
         cline: {
-          compatible: true,
+          enabled: true,
         },
       },
       tags: [...(this.extractTags(context, projectContext) || []), 'skill'],
@@ -442,13 +443,13 @@ export class MigrationAdapter {
       content: this.organizeContent(context),
       platforms: {
         acp: {
-          compatible: true,
+          enabled: true,
         },
         zed: {
-          compatible: true,
+          enabled: true,
         },
         'openai-codex': {
-          compatible: true,
+          enabled: true,
         },
       },
     };
@@ -618,7 +619,7 @@ export class MigrationAdapter {
 
     // Always include Claude Code CLI compatibility for migration
     platforms['claude-code-cli'] = {
-      compatible: true,
+      enabled: true,
       memory: true,
     };
 
@@ -634,7 +635,7 @@ export class MigrationAdapter {
     const originalPlatform = platformMap[context.type];
     if (originalPlatform && originalPlatform !== 'claude-code-cli') {
       platforms[originalPlatform] = {
-        compatible: true,
+        enabled: true,
         ...(originalPlatform === 'cursor' && { activation: 'always' }),
         ...(originalPlatform === 'github-copilot' && { priority: 8 }),
         ...(originalPlatform === 'windsurf' && { mode: 'workspace' }),

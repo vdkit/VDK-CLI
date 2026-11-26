@@ -48,7 +48,7 @@ function getNestedValue(obj, path) {
  */
 export function prepareTemplateVariables(analysisData) {
   const projectStructure = analysisData.projectStructure || {};
-  const techData = analysisData.technologyData || {};
+  const techData = analysisData.techStack || {};
   const patterns = analysisData.patterns || {};
 
   return {

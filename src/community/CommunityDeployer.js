@@ -17,6 +17,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import path from 'node:path';
 import { searchBlueprints } from '../blueprints-client.js';
+import { EquivalenceEvaluator } from '../blueprints/equivalence/EquivalenceEvaluator.js';
 import { VDKHubClient } from '../hub/VDKHubClient.js';
 import { createIntegrationManager } from '../integrations/index.js';
 import { ProjectScanner } from '../scanner/core/ProjectScanner.js';
@@ -28,6 +29,7 @@ export class CommunityDeployer {
     this.projectPath = projectPath;
     this.projectScanner = new ProjectScanner({ projectPath });
     this.ruleAdapter = new RuleAdapter({ projectPath });
+    this.equivalenceEvaluator = new EquivalenceEvaluator();
     this.contextAnalyzer = new ProjectContextAnalyzer(projectPath);
     this.integrationManager = null;
     this.hubClient = null;
@@ -76,6 +78,11 @@ export class CommunityDeployer {
       // 5. Deploy to detected platforms
       spinner.start('Deploying to detected platforms...');
       const deployResult = await this.deployToIntegrations(adaptedBlueprint, projectContext);
+      if (!deployResult.success) {
+        await this.trackBlueprintUsage(blueprintId, deployResult, projectContext);
+        const details = [...deployResult.errors, ...deployResult.warnings].filter(Boolean).join('; ');
+        throw new Error(details || 'No files were deployed to detected platforms');
+      }
       spinner.succeed('Deployment complete');
 
       // 6. Track usage for community analytics
@@ -342,8 +349,8 @@ export class CommunityDeployer {
       }
       await this.integrationManager.scanAll({ verbose: false });
 
-      if (typeof this.ruleAdapter?.adaptRules !== 'function') {
-        throw new Error('RuleAdapter does not support adaptRules() for community deployment');
+      if (typeof this.ruleAdapter?.adaptFromBlueprint !== 'function') {
+        throw new Error('RuleAdapter does not support adaptFromBlueprint() for community deployment');
       }
 
       const activeIntegrations = this.integrationManager.getActiveIntegrations?.() || [];
@@ -353,19 +360,31 @@ export class CommunityDeployer {
         return deployResult;
       }
 
-      // Convert adapted blueprint to standardized rule format and deploy per platform
-      const rules = this.convertBlueprintToRules(adaptedBlueprint);
+      const canonicalBlueprint = this.toCanonicalDeploymentBlueprint(adaptedBlueprint);
 
       for (const integration of activeIntegrations) {
         const platformId = this.mapIntegrationToPlatformId(integration.name);
 
         try {
-          const adaptResult = await this.ruleAdapter.adaptRules(
-            rules,
-            platformId,
-            projectContext || adaptedBlueprint?.adaptedFor || {},
-            adaptedBlueprint?.platforms?.[platformId] || {}
+          const equivalence = this.equivalenceEvaluator.evaluateBlueprintForPlatform(
+            canonicalBlueprint,
+            platformId
           );
+          const equivalenceWarnings = this.equivalenceEvaluator.toWarningMessages(
+            equivalence,
+            integration.name
+          );
+
+          if (equivalence.outcome === 'unsupported') {
+            deployResult.warnings.push(...equivalenceWarnings);
+            continue;
+          }
+
+          deployResult.warnings.push(...equivalenceWarnings);
+
+          const adaptResult = await this.ruleAdapter.adaptFromBlueprint(canonicalBlueprint, platformId, {
+            projectContext: projectContext || adaptedBlueprint?.adaptedFor || {},
+          });
 
           if (!adaptResult?.files || adaptResult.files.length === 0) {
             deployResult.warnings.push(`No files generated for ${integration.name}`);
@@ -429,7 +448,7 @@ export class CommunityDeployer {
           framework: projectContext.framework,
           language: projectContext.language,
           platform: process.platform,
-          cliVersion: '2.0.0',
+          cliVersion: '3.0.2',
         },
         deploymentResult: {
           success: deployResult.success,
@@ -442,7 +461,7 @@ export class CommunityDeployer {
 
       // Also send general telemetry for CLI analytics
       await hubClient.sendUsageTelemetry({
-        cli_version: '2.0.0',
+        cli_version: '3.0.2',
         command: 'deploy',
         platform: process.platform,
         success: deployResult.success,
@@ -732,30 +751,60 @@ ${enhancement.content}
 *Added based on your ${context.framework} + ${context.language} setup*`;
   }
 
-  /**
-   * Convert blueprint to rules format for integration system
-   */
-  convertBlueprintToRules(blueprint) {
-    return [
-      {
-        id: blueprint.metadata?.id || 'community-blueprint',
-        name: blueprint.title || 'Community Blueprint',
-        title: blueprint.title || 'Community Blueprint',
-        frontmatter: {
-          description: blueprint.description || 'Community imported blueprint',
-          category: 'imported',
-          alwaysApply: false,
-          globs: [],
-        },
-        content: blueprint.content,
-        metadata: {
-          source: 'community',
-          blueprintId: blueprint.metadata?.id,
-          adaptedFor: blueprint.adaptedFor?.name,
-          adaptedAt: blueprint.adaptedAt,
-        },
+  toCanonicalDeploymentBlueprint(blueprint) {
+    const metadata =
+      blueprint?.metadata && typeof blueprint.metadata === 'object' && !Array.isArray(blueprint.metadata)
+        ? blueprint.metadata
+        : {};
+    const source =
+      blueprint?.source && typeof blueprint.source === 'object' && !Array.isArray(blueprint.source)
+        ? blueprint.source
+        : {};
+    const schemaVersion =
+      blueprint?.schemaVersion || metadata.schemaVersion || metadata.schema_version || '3.0';
+    const kind = blueprint?.kind || metadata.kind;
+    const platforms = blueprint?.platforms || metadata.platforms;
+    const content = blueprint?.content || source.content || '';
+
+    if (schemaVersion !== '3.0') {
+      throw new Error(`Community blueprint must be schema v3.0, got ${schemaVersion || 'missing'}`);
+    }
+
+    if (!kind) {
+      throw new Error('Community blueprint is missing canonical kind');
+    }
+
+    if (!platforms || typeof platforms !== 'object' || Array.isArray(platforms)) {
+      throw new Error('Community blueprint is missing deployable platform components');
+    }
+
+    return {
+      ...blueprint,
+      id: blueprint?.id || metadata.id || blueprint?.slug || 'community-blueprint',
+      title: blueprint?.title || metadata.title || 'Community Blueprint',
+      description: blueprint?.description || metadata.description || 'Community imported blueprint',
+      content,
+      kind,
+      schemaVersion,
+      specificityLayer:
+        blueprint?.specificityLayer || metadata.specificityLayer || metadata.specificity_layer,
+      equivalenceOutcome:
+        blueprint?.equivalenceOutcome || metadata.equivalenceOutcome || metadata.equivalence_outcome,
+      platforms,
+      metadata: {
+        ...metadata,
+        source: 'community',
+        kind,
+        schemaVersion,
+        platforms,
+        adaptedFor: blueprint?.adaptedFor?.name,
+        adaptedAt: blueprint?.adaptedAt,
       },
-    ];
+      source: {
+        ...source,
+        content,
+      },
+    };
   }
 
   async writeAdaptedFiles(files) {
@@ -774,7 +823,7 @@ ${enhancement.content}
 
   mapIntegrationToPlatformId(integrationName) {
     const mapping = {
-      'Claude Code CLI': 'claude-code-cli',
+      'Claude Code CLI': 'claude-code',
       Cursor: 'cursor',
       Windsurf: 'windsurf',
       'GitHub Copilot': 'github-copilot',
@@ -932,7 +981,7 @@ ${enhancement.content}
     if (!platforms || typeof platforms !== 'object') return 'All platforms';
     return (
       Object.keys(platforms)
-        .filter(p => platforms[p]?.compatible)
+        .filter(p => platforms[p] && platforms[p].enabled !== false)
         .join(', ') || 'Unknown'
     );
   }
@@ -995,7 +1044,18 @@ ${enhancement.content}
       description: hubBlueprint.description,
       content: hubBlueprint.content,
       author: hubBlueprint.author,
-      platforms: hubBlueprint.platforms || {},
+      kind: hubBlueprint.kind || normalizedMetadata.kind,
+      schemaVersion:
+        hubBlueprint.schemaVersion || normalizedMetadata.schemaVersion || normalizedMetadata.schema_version,
+      specificityLayer:
+        hubBlueprint.specificityLayer ||
+        normalizedMetadata.specificityLayer ||
+        normalizedMetadata.specificity_layer,
+      equivalenceOutcome:
+        hubBlueprint.equivalenceOutcome ||
+        normalizedMetadata.equivalenceOutcome ||
+        normalizedMetadata.equivalence_outcome,
+      platforms: hubBlueprint.platforms || normalizedMetadata.platforms || {},
       metadata: normalizedMetadata,
       stats: hubBlueprint.stats,
       created: hubBlueprint.created,
@@ -1018,7 +1078,21 @@ ${enhancement.content}
       description: normalizedMetadata.description,
       content: repoBlueprint.content,
       author: normalizedMetadata.author,
-      platforms: repoBlueprint.platforms || {},
+      kind: repoBlueprint.kind || normalizedMetadata.kind,
+      schemaVersion:
+        repoBlueprint.schemaVersion ||
+        normalizedMetadata.schemaVersion ||
+        normalizedMetadata.schema_version ||
+        '3.0',
+      specificityLayer:
+        repoBlueprint.specificityLayer ||
+        normalizedMetadata.specificityLayer ||
+        normalizedMetadata.specificity_layer,
+      equivalenceOutcome:
+        repoBlueprint.equivalenceOutcome ||
+        normalizedMetadata.equivalenceOutcome ||
+        normalizedMetadata.equivalence_outcome,
+      platforms: repoBlueprint.platforms || normalizedMetadata.platforms || {},
       framework: normalizedMetadata.tags?.find(t =>
         ['react', 'vue', 'angular', 'nextjs'].includes(t)
       ),

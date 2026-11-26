@@ -296,10 +296,9 @@ export class MigrationBackup {
       });
     }
 
-    // VDK migration staging directories (primary + legacy)
+    // VDK migration staging directory
     const migrationDirs = [
       { path: path.join(this.projectPath, '.vdk', 'migrate'), relativePath: '.vdk/migrate' },
-      { path: path.join(this.projectPath, '.vdk', 'import'), relativePath: '.vdk/import' },
     ];
 
     for (const migrationDir of migrationDirs) {
@@ -314,7 +313,6 @@ export class MigrationBackup {
 
     // IDE-specific configuration files that VDK might modify
     const ideConfigs = [
-      '.cursorrules',
       '.cursor/rules/',
       '.windsurf/rules/',
       '.claude/',

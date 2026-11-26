@@ -479,6 +479,23 @@ export class RuleAdapter {
       );
     }
 
+    // KIND-AWARE PATH: agent/command/skill/workflow blueprints must produce the
+    // correct artifact type & location (not be flattened into a generic memory
+    // file). Dispatch to the component-aware adapter when the blueprint kind is
+    // a typed artifact and the resolved platform declares matching components.
+    const blueprintKind = this.resolveBlueprintKind(blueprint);
+    if (this.isTypedArtifactKind(blueprintKind)) {
+      const kindAware = await this.adaptComponentsFromBlueprint(
+        blueprint,
+        blueprintKind,
+        resolution
+      );
+
+      if (kindAware) {
+        return kindAware;
+      }
+    }
+
     const rules = this.extractCanonicalRulesFromComponents(platformConfig.components, blueprint);
 
     if (rules.length === 0) {
@@ -522,6 +539,345 @@ export class RuleAdapter {
   }
 
   /**
+   * Resolve the canonical kind of a blueprint from either the flattened
+   * top-level field or nested metadata.
+   * @param {Object} blueprint
+   * @returns {string}
+   */
+  resolveBlueprintKind(blueprint) {
+    const rawKind = blueprint?.kind || blueprint?.metadata?.kind || '';
+    return String(rawKind).toLowerCase().trim();
+  }
+
+  /**
+   * Typed artifact kinds map a blueprint to a specific platform-native artifact
+   * (agent file, slash command, skill, workflow) rather than a generic rule or
+   * project-memory file. project-memory and conditional-rule stay on the
+   * existing rule/memory adaptation path.
+   * @param {string} kind
+   * @returns {boolean}
+   */
+  isTypedArtifactKind(kind) {
+    return ['agent', 'command', 'skill', 'workflow'].includes(kind);
+  }
+
+  /**
+   * Map a canonical kind to the v3 component key it is emitted under.
+   * @param {string} kind
+   * @returns {string}
+   */
+  kindToComponentKey(kind) {
+    const map = {
+      agent: 'agents',
+      command: 'commands',
+      skill: 'skills',
+      workflow: 'workflows',
+    };
+    return map[kind] || 'rules';
+  }
+
+  /**
+   * Kind-aware deployment. Builds typed components (agents/commands/skills/
+   * workflows/rules/main) from the blueprint's platform component declarations
+   * and routes each to the correct platform-native artifact via adaptComponents.
+   *
+   * Returns null when the resolved platform cannot represent the blueprint's
+   * kind, in which case an `unsupported` equivalence outcome is reported and the
+   * caller does NOT silently downgrade to a generic rule file.
+   *
+   * @param {Object} blueprint
+   * @param {string} blueprintKind
+   * @param {Object} resolution - Result of resolveBlueprintPlatformConfig
+   * @returns {Promise<Object|null>} { files, warnings, success, equivalenceOutcome } or null
+   */
+  async adaptComponentsFromBlueprint(blueprint, blueprintKind, resolution) {
+    const platformConfig = resolution.platformConfig;
+    const targetPlatform = this.resolveAdapterTargetPlatform(
+      resolution.requestedPlatform,
+      resolution.matchedPlatform
+    );
+
+    const components = this.buildTypedComponents(blueprint, platformConfig.components || {});
+    const componentKey = this.kindToComponentKey(blueprintKind);
+
+    // Determine whether the target platform can represent this kind. We rely on
+    // adaptComponents' per-platform sub-adapters which return null for
+    // unsupported component types.
+    const projectContext = {
+      name: blueprint.title || blueprint.metadata?.title,
+      description: blueprint.description || blueprint.metadata?.description,
+      kind: blueprintKind,
+      targetPlatform,
+      sourcePlatform: resolution.matchedPlatform,
+      ...blueprint.metadata,
+    };
+
+    const adapted = await this.adaptComponents(components, targetPlatform, projectContext);
+    const files = this.flattenAdaptedComponents(adapted);
+
+    const primaryComponentEmitted = this.componentKeyEmitted(adapted, componentKey);
+
+    if (files.length === 0 || !primaryComponentEmitted) {
+      // The platform cannot represent this kind. Surface it as unsupported/lossy
+      // instead of silently downgrading the blueprint to a generic rule file.
+      return {
+        files,
+        warnings: [
+          `Platform '${targetPlatform}' cannot represent ${blueprintKind} blueprints natively` +
+            ` (no ${componentKey} artifact produced)`,
+        ],
+        success: files.length > 0,
+        equivalenceOutcome: files.length > 0 ? 'lossy' : 'unsupported',
+      };
+    }
+
+    const warnings = [];
+    if (
+      resolution.matchedViaAlias &&
+      targetPlatform === resolution.requestedPlatform &&
+      this.shouldWarnOnPlatformFallback(resolution.requestedPlatform, resolution.matchedPlatform)
+    ) {
+      warnings.push(
+        `Using fallback platform config '${resolution.matchedPlatform}' for target '${resolution.requestedPlatform}'`
+      );
+    }
+
+    return {
+      files,
+      warnings,
+      success: true,
+      equivalenceOutcome: 'lossless',
+    };
+  }
+
+  /**
+   * Build typed component arrays (agents/commands/skills/workflows/rules) plus
+   * main/settings from the blueprint's platform component declarations. The
+   * blueprint body content is used for each manifest that does not carry its own
+   * inline content.
+   * @param {Object} blueprint
+   * @param {Object} components - platformConfig.components
+   * @returns {Object} Typed components for adaptComponents
+   */
+  buildTypedComponents(blueprint, components) {
+    const typed = {
+      main: null,
+      agents: [],
+      rules: [],
+      commands: [],
+      skills: [],
+      workflows: [],
+      settings: null,
+    };
+
+    const body = blueprint.source?.content || blueprint.content || '';
+    const baseName =
+      blueprint.id ||
+      blueprint.metadata?.id ||
+      this.slugify(blueprint.title || blueprint.metadata?.title || 'blueprint');
+    const description = blueprint.description || blueprint.metadata?.description || '';
+    const metadata = blueprint.metadata || {};
+
+    const buildEntries = (config, mapper) => {
+      const entries = [];
+      const manifests =
+        Array.isArray(config.manifests) && config.manifests.length > 0
+          ? config.manifests
+          : [{ name: baseName, file: config.location }];
+
+      for (const manifest of manifests) {
+        entries.push(mapper(manifest));
+      }
+
+      return entries;
+    };
+
+    for (const [componentKey, config] of Object.entries(components || {})) {
+      if (!config || config.enabled === false) {
+        continue;
+      }
+
+      switch (componentKey) {
+        case 'agents':
+          typed.agents.push(
+            ...buildEntries(config, manifest => ({
+              name: manifest.name || baseName,
+              content: manifest.content || body,
+              description: manifest.description || description,
+              tools: manifest.tools || metadata.tools,
+              model: manifest.model || metadata.model,
+              triggers: manifest.triggers || metadata.triggers,
+            }))
+          );
+          break;
+
+        case 'commands':
+          typed.commands.push(
+            ...buildEntries(config, manifest => ({
+              name: manifest.name || baseName,
+              content: manifest.content || body,
+              description: manifest.description || description,
+              allowedTools: manifest.allowedTools || metadata.allowedTools,
+              argumentHint: manifest.argumentHint || metadata.argumentHint,
+            }))
+          );
+          break;
+
+        case 'skills':
+          typed.skills.push(
+            ...buildEntries(config, manifest => ({
+              name: manifest.name || baseName,
+              content: manifest.content || body,
+              description: manifest.description || description,
+            }))
+          );
+          break;
+
+        case 'workflows':
+          typed.workflows.push(
+            ...buildEntries(config, manifest => ({
+              name: manifest.name || baseName,
+              content: manifest.content || body,
+              description: manifest.description || description,
+            }))
+          );
+          break;
+
+        case 'rules':
+        case 'conditional':
+          typed.rules.push(
+            ...buildEntries(config, manifest => ({
+              name: manifest.name || baseName,
+              content: manifest.content || body,
+              description: manifest.description || description,
+              globs: manifest.globs || manifest.paths || metadata.globs,
+              paths: manifest.paths || metadata.paths,
+              alwaysApply: manifest.alwaysApply ?? metadata.alwaysApply,
+            }))
+          );
+          break;
+
+        case 'main':
+        case 'repo-level':
+        case 'directory-level':
+          typed.main = { content: body, location: config.location };
+          break;
+
+        case 'settings':
+        case 'config':
+          typed.settings = {
+            content: config.content ?? config.settings ?? {},
+            location: config.location,
+          };
+          break;
+
+        default:
+          // Unknown component type - treat as rule content so it is not dropped.
+          typed.rules.push({
+            name: baseName,
+            content: body,
+            description,
+          });
+          break;
+      }
+    }
+
+    return typed;
+  }
+
+  /**
+   * Flatten the structured adaptComponents output into the {path, content,
+   * type, scope} file shape consumed by the deploy writer.
+   * @param {Object} adapted - Output of adaptComponents
+   * @returns {Array} Files
+   */
+  flattenAdaptedComponents(adapted) {
+    const files = [];
+
+    const pushArtifact = (artifact, type) => {
+      if (!artifact || !artifact.location) {
+        return;
+      }
+      files.push({
+        path: path.isAbsolute(artifact.location)
+          ? artifact.location
+          : path.join(this.projectPath, artifact.location),
+        content: this.renderComponentContent(artifact),
+        type,
+        scope: 'project',
+      });
+    };
+
+    for (const agent of adapted.agents || []) pushArtifact(agent, 'agent');
+    for (const rule of adapted.rules || []) pushArtifact(rule, 'rule');
+    for (const command of adapted.commands || []) pushArtifact(command, 'command');
+    for (const skill of adapted.skills || []) pushArtifact(skill, 'skill');
+    for (const workflow of adapted.workflows || []) pushArtifact(workflow, 'workflow');
+
+    if (adapted.main) pushArtifact(adapted.main, 'main');
+    if (adapted.settings) pushArtifact(adapted.settings, 'settings');
+
+    return files;
+  }
+
+  /**
+   * Whether the kind's primary component produced at least one artifact.
+   * @param {Object} adapted
+   * @param {string} componentKey
+   * @returns {boolean}
+   */
+  componentKeyEmitted(adapted, componentKey) {
+    const collection = adapted[componentKey];
+    return Array.isArray(collection) && collection.length > 0;
+  }
+
+  /**
+   * Render an adapted component artifact into file content, prepending
+   * frontmatter when the artifact declares it.
+   * @param {Object} artifact - { content, frontmatter, format }
+   * @returns {string}
+   */
+  renderComponentContent(artifact) {
+    const rawContent =
+      typeof artifact.content === 'string'
+        ? artifact.content
+        : JSON.stringify(artifact.content ?? {}, null, 2);
+
+    if (!artifact.frontmatter || Object.keys(artifact.frontmatter).length === 0) {
+      return rawContent;
+    }
+
+    const frontmatterLines = Object.entries(artifact.frontmatter)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => {
+        if (Array.isArray(value)) {
+          return `${key}: [${value.map(item => JSON.stringify(item)).join(', ')}]`;
+        }
+        if (typeof value === 'object') {
+          return `${key}: ${JSON.stringify(value)}`;
+        }
+        return `${key}: ${value}`;
+      });
+
+    return `---\n${frontmatterLines.join('\n')}\n---\n\n${this.stripFrontmatter(rawContent)}`;
+  }
+
+  /**
+   * Slugify a string into a filesystem-safe component name.
+   * @param {string} value
+   * @returns {string}
+   */
+  slugify(value) {
+    return (
+      String(value)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80) || 'blueprint'
+    );
+  }
+
+  /**
    * Resolve adapter execution target when a platform family fallback is used.
    * Keeps requested platform semantics while allowing first-class family adapters
    * (e.g., VS Code variants using Copilot instructions).
@@ -556,7 +912,7 @@ export class RuleAdapter {
 
   /**
    * Determine whether alias-based platform fallback should produce a warning.
-   * Some fallbacks are intentional first-class compatibility bridges.
+   * Some fallbacks are intentional first-class platform mappings.
    * @param {string} requestedPlatform
    * @param {string|null} resolvedPlatform
    * @returns {boolean}
@@ -665,15 +1021,15 @@ export class RuleAdapter {
       console.log(chalk.gray(`Adapting ${rules.length} rules for ${targetIDE}...`));
     }
 
-    // Check platform compatibility first
-    if (platformConfig.compatible === false) {
+    // Check platform enablement first
+    if (platformConfig.enabled === false) {
       return {
         paths: [],
         rules: [],
         summary: {
           generated: 0,
           skipped: rules.length,
-          reason: 'Platform not compatible',
+          reason: 'Platform not enabled',
         },
       };
     }
@@ -861,7 +1217,7 @@ export class RuleAdapter {
   /**
    * Adapt rules for Claude Code CLI's memory system with VDK-native intelligence
    * @param {Array} rules - Standardized rules
-   * @param {Object} projectContext - Full VDK analysis data (projectStructure, technologyData, patterns)
+   * @param {Object} projectContext - Full VDK analysis data (projectStructure, techStack, patterns)
    * @param {Object} platformConfig - Claude-specific configuration
    * @returns {Object} Claude-native memory files and commands
    */
@@ -920,7 +1276,7 @@ export class RuleAdapter {
 
     // 2. Main project memory with VDK-native intelligence - Deploy to ./CLAUDE.md
     const projectName = path.basename(this.projectPath);
-    const technologyData = projectContext.technologyData || projectContext.technology || {};
+    const technologyData = projectContext.techStack || {};
     const projectType = this.determineProjectType(projectContext);
     const packageManager = await this.detectPackageManager(projectContext);
 
@@ -1004,10 +1360,17 @@ ${technologyGuidelines}
 *Technology rules: ${technologyRules.length} rules integrated*
 
 ${rules
-  .filter(r => r.frontmatter?.category === 'imported' || r.frontmatter?.category === 'memory')
+  .filter(
+    r =>
+      r.frontmatter?.category === 'imported' ||
+      r.frontmatter?.category === 'memory' ||
+      // Migrated contexts carry migration provenance — their REAL content must
+      // be emitted into CLAUDE.md rather than dropped.
+      r.frontmatter?.migration
+  )
   .map(
-    r => `## Legacy Context (${r.name})
-${r.content}`
+    r => `## ${r.frontmatter?.migration ? 'Migrated Context' : 'Legacy Context'} (${r.frontmatter?.title || r.name})
+${this.stripFrontmatter(r.content || '')}`
   )
   .join('\n\n')}`;
 
@@ -1091,7 +1454,7 @@ ${r.content}`
   }
 
   /**
-   * Helper: Convert legacy rule object to IR
+   * Helper: Convert a rule object to IR
    */
   ruleToIR(rule) {
     const parsedContent = IR.parse.markdown(rule.content || '');
@@ -1664,7 +2027,7 @@ For file-based AI rule management, consider:
       '## Context Entries',
       ...manifestEntries.map(entry => {
         const fileName = String(entry.file).replace(/^context\//, '');
-        return `- [${entry.title}](./${fileName}) — ${entry.kind}`;
+        return `- [${entry.title}](./${fileName}) - ${entry.kind}`;
       }),
     ].join('\n');
 
@@ -3158,7 +3521,7 @@ This directory contains GitHub Copilot Enterprise coding guidelines generated by
    * @returns {string} Human-readable project type
    */
   determineProjectType(projectContext) {
-    const technologyData = projectContext.technologyData || projectContext.technology || {};
+    const technologyData = projectContext.techStack || {};
     const frameworks = technologyData.frameworks || [];
     const languages = technologyData.primaryLanguages || [];
     const stacks = technologyData.stacks || [];
@@ -3204,7 +3567,7 @@ This directory contains GitHub Copilot Enterprise coding guidelines generated by
    * Check if this is a CLI project based on package.json and structure
    */
   isCLIProject(projectContext) {
-    const technologyData = projectContext.technologyData || projectContext.technology || {};
+    const technologyData = projectContext.techStack || {};
     const projectStructure = projectContext.projectStructure || projectContext.structure || {};
 
     // Check for CLI indicators in package.json
@@ -3262,7 +3625,7 @@ This directory contains GitHub Copilot Enterprise coding guidelines generated by
 - Use project-specific conventions`;
     }
 
-    const technologyData = projectContext.technologyData || projectContext.technology || {};
+    const technologyData = projectContext.techStack || {};
     const frameworks = technologyData.frameworks || [];
     const languages = technologyData.primaryLanguages || [];
     const libraries = technologyData.libraries || [];
@@ -3577,14 +3940,45 @@ This directory contains GitHub Copilot Enterprise coding guidelines generated by
   async adaptAgent(agent, targetPlatform, projectContext) {
     switch (targetPlatform.toLowerCase()) {
       case 'claude-code':
+      case 'claude-desktop':
         return this.adaptAgentForClaude(agent, projectContext);
       case 'cursor':
         return this.adaptAgentForCursor(agent, projectContext);
       case 'windsurf':
         return this.adaptAgentForWindsurf(agent, projectContext);
+      case 'openai-codex':
+      case 'codex':
+        // Codex represents agents via the natural-language AGENTS.md file.
+        return {
+          name: agent.name,
+          content: this.composeAgentMarkdown(agent),
+          format: 'markdown',
+          location: 'AGENTS.md',
+        };
+      case 'gemini-cli':
+        // Gemini represents agent guidance inside GEMINI.md.
+        return {
+          name: agent.name,
+          content: this.composeAgentMarkdown(agent),
+          format: 'markdown',
+          location: 'GEMINI.md',
+        };
       default:
-        return agent; // Return as-is for unsupported platforms
+        return null; // Platform cannot represent agents natively
     }
+  }
+
+  /**
+   * Compose a natural-language agent markdown body for platforms that store
+   * agent guidance in a single instructions file (AGENTS.md / GEMINI.md).
+   * @param {Object} agent
+   * @returns {string}
+   */
+  composeAgentMarkdown(agent) {
+    const title = agent.name || 'Agent';
+    const description = agent.description ? `\n\n${agent.description}` : '';
+    const body = this.stripFrontmatter(agent.content || '').trim();
+    return `# ${title}${description}\n\n${body}\n`;
   }
 
   /**

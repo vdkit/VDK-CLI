@@ -189,10 +189,15 @@ ${options.description || 'Project architecture guidelines'}
     };
 
     try {
-      // Generate GEMINI.md main context file
+      // Ensure .gemini directory exists for settings/styleguide artifacts.
+      await fs.promises.mkdir(this.geminiConfigPath, { recursive: true });
+
+      // Generate GEMINI.md main context file. Rule content MUST be emitted —
+      // when no explicit main component is provided we synthesize the main
+      // context from the rule components so rules are never silently dropped.
       if (components.main || (components.rules && components.rules.length > 0)) {
         try {
-          const styleguideContent = components.main?.content || '';
+          const styleguideContent = this.composeGeminiContext(components);
           const geminiMainPath = path.join(this.projectPath, 'GEMINI.md');
           const styleguidePathFile = path.join(this.geminiConfigPath, 'styleguide.md');
 
@@ -205,16 +210,17 @@ ${options.description || 'Project architecture guidelines'}
         }
       }
 
-      // Generate settings.json with MCP config
-      if (components.settings || components.mcpConfig) {
-        try {
-          const settingsPath = path.join(this.geminiConfigPath, 'settings.json');
-          const settings = components.settings?.content || { mcpServers: {} };
-          await this.writeJsonFile(settingsPath, settings);
-          result.files.push({ type: 'settings', path: settingsPath });
-        } catch (error) {
-          result.errors.push(`Failed to generate settings: ${error.message}`);
-        }
+      // Always write .gemini/settings.json. Gemini CLI reads MCP server config
+      // and model preferences from this file; previously it was only written
+      // when an explicit settings component was supplied, so live deployments
+      // never produced it.
+      try {
+        const settingsPath = path.join(this.geminiConfigPath, 'settings.json');
+        const settings = this.buildGeminiSettings(components);
+        await this.writeJsonFile(settingsPath, settings);
+        result.files.push({ type: 'settings', path: settingsPath });
+      } catch (error) {
+        result.errors.push(`Failed to generate settings: ${error.message}`);
       }
 
       // Warn about unsupported components
@@ -241,5 +247,74 @@ ${options.description || 'Project architecture guidelines'}
     }
 
     return result;
+  }
+
+  /**
+   * Compose the GEMINI.md / styleguide.md context from main + rule components.
+   * Rule, agent and command guidance is merged inline because Gemini CLI has no
+   * separate rule files — everything lives in the styleguide context.
+   * @param {Object} components
+   * @returns {string}
+   */
+  composeGeminiContext(components) {
+    const sections = [];
+
+    if (components.main?.content) {
+      sections.push(components.main.content.trim());
+    }
+
+    const ruleSections = (components.rules || [])
+      .map(rule => {
+        const heading = rule.name || rule.description || 'Rule';
+        const body = (rule.content || '').trim();
+        return body ? `## ${heading}\n\n${body}` : '';
+      })
+      .filter(Boolean);
+
+    // Agents are merged into the styleguide per Gemini's ReAct model.
+    const agentSections = (components.agents || [])
+      .map(agent => {
+        const heading = agent.name || 'Agent';
+        const body = (agent.content || '').trim();
+        return body ? `## Agent: ${heading}\n\n${body}` : '';
+      })
+      .filter(Boolean);
+
+    if (sections.length === 0 && ruleSections.length === 0 && agentSections.length === 0) {
+      return `# Gemini Context\n\nNo rules generated.\n`;
+    }
+
+    if (sections.length === 0) {
+      sections.push(`# Gemini Context for ${path.basename(this.projectPath)}`);
+    }
+
+    return [...sections, ...ruleSections, ...agentSections].join('\n\n').concat('\n');
+  }
+
+  /**
+   * Build the .gemini/settings.json payload, preserving any explicit settings
+   * component and ensuring an mcpServers map always exists.
+   * @param {Object} components
+   * @returns {Object}
+   */
+  buildGeminiSettings(components) {
+    const provided =
+      components.settings?.content && typeof components.settings.content === 'object'
+        ? components.settings.content
+        : {};
+
+    const mcpServers = {
+      ...(typeof provided.mcpServers === 'object' && provided.mcpServers !== null
+        ? provided.mcpServers
+        : {}),
+      ...(components.mcpConfig && typeof components.mcpConfig === 'object'
+        ? components.mcpConfig.mcpServers || {}
+        : {}),
+    };
+
+    return {
+      ...provided,
+      mcpServers,
+    };
   }
 }

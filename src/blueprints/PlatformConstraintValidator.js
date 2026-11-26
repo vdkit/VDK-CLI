@@ -6,6 +6,7 @@
  */
 
 import chalk from 'chalk';
+import yaml from 'js-yaml';
 
 export class PlatformConstraintValidator {
   constructor(options = {}) {
@@ -479,7 +480,6 @@ export class PlatformConstraintValidator {
 
     const frontmatterText = content.slice(3, endIndex).trim();
     try {
-      const yaml = require('js-yaml');
       return yaml.load(frontmatterText) || {};
     } catch {
       return {};
@@ -493,7 +493,6 @@ export class PlatformConstraintValidator {
    */
   isValidYAML(content) {
     try {
-      const yaml = require('js-yaml');
       yaml.load(content);
       return true;
     } catch {
@@ -522,6 +521,85 @@ export class PlatformConstraintValidator {
    */
   getConstraints(platformId) {
     return this.constraints[platformId] || {};
+  }
+
+  /**
+   * Resolve the most restrictive character limit declared for a platform.
+   * Scans every component constraint (e.g. repo-level.maxChars) and any
+   * aggregate limits (totalLimit/combinedLimit) and returns the smallest.
+   * @param {string} platformId - Platform identifier
+   * @returns {number|null} Maximum character count, or null when unconstrained
+   */
+  getMaxCharsForPlatform(platformId) {
+    const platformConstraints = this.constraints[platformId];
+    if (!platformConstraints) {
+      return null;
+    }
+
+    let limit = null;
+    const consider = value => {
+      if (typeof value === 'number' && value > 0) {
+        limit = limit === null ? value : Math.min(limit, value);
+      }
+    };
+
+    for (const componentConstraints of Object.values(platformConstraints)) {
+      if (componentConstraints && typeof componentConstraints === 'object') {
+        consider(componentConstraints.maxChars);
+        consider(componentConstraints.combinedLimit?.maxChars);
+      }
+    }
+
+    return limit;
+  }
+
+  /**
+   * Enforce the per-platform character limit on content as the single source
+   * of constraint truth for all adapters/integrations. Truncates (via the
+   * smart truncation strategy) when the content exceeds the platform limit.
+   * @param {string} content - Content to enforce limits on
+   * @param {string} platformId - Platform identifier
+   * @param {Object} [options] - Options ({ mode: 'truncate' | 'warn' })
+   * @returns {{ content: string, enforced: boolean, truncated: boolean, limit: number|null, originalLength: number, warning?: string }}
+   */
+  enforceCharLimit(content, platformId, options = {}) {
+    const mode = options.mode || 'truncate';
+    const originalLength = typeof content === 'string' ? content.length : 0;
+    const limit = this.getMaxCharsForPlatform(platformId);
+
+    if (limit === null || originalLength <= limit) {
+      return {
+        content,
+        enforced: false,
+        truncated: false,
+        limit,
+        originalLength,
+      };
+    }
+
+    const warning = `${platformId}: content exceeds ${limit} character limit (${originalLength} chars)`;
+
+    if (mode === 'warn') {
+      return {
+        content,
+        enforced: true,
+        truncated: false,
+        limit,
+        originalLength,
+        warning,
+      };
+    }
+
+    const truncated = this.truncateContent(content, limit, options);
+
+    return {
+      content: truncated,
+      enforced: true,
+      truncated: true,
+      limit,
+      originalLength,
+      warning: `${warning} — truncated to ${truncated.length} chars`,
+    };
   }
 
   /**

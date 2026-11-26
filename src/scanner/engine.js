@@ -113,7 +113,7 @@ export async function runScanner(options) {
         directoryCount: projectData.directories?.length || 0,
         fileTypes: projectData.fileTypes,
       },
-      technologyData: techData,
+      techStack: techData,
       patterns,
       outputPath,
     };

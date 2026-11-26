@@ -22,7 +22,7 @@ export class MigrationDetector {
         priority: 'high',
       },
       cursor: {
-        filePatterns: ['.cursorrules', 'cursorrules', '.cursor-rules', '.cursor/**/*'],
+        filePatterns: ['.cursor/**/*'],
         directoryPatterns: ['.cursor'],
         indicators: ['cursor', '@', 'tab trigger'],
         priority: 'high',
@@ -186,7 +186,7 @@ export class MigrationDetector {
 
     // Check specific file names first (highest priority)
     if (fileName === 'CLAUDE.md') return 'claude-code-cli';
-    if (['.cursorrules', 'cursorrules', '.cursor-rules'].includes(fileName)) return 'cursor';
+    if (fileName.endsWith('.mdc') && lowerPath.includes('.cursor/')) return 'cursor';
     if (fileName.startsWith('.copilotrc')) return 'github-copilot';
     if (fileName.startsWith('.windsurfrc') || fileName.startsWith('windsurf.config'))
       return 'windsurf';
@@ -268,9 +268,9 @@ export class MigrationDetector {
     const extension = path.extname(fileName).toLowerCase();
 
     // Files without extension that are typically text
-    const textFiles = ['.cursorrules', 'cursorrules', '.gitignore', '.copilotrc', '.windsurfrc'];
+    const textFiles = ['.gitignore', '.copilotrc', '.windsurfrc'];
 
-    return textExtensions.includes(extension) || textFiles.includes(fileName);
+    return textExtensions.includes(extension) || fileName.endsWith('.mdc') || textFiles.includes(fileName);
   }
 
   /**
@@ -515,7 +515,7 @@ export class MigrationDetector {
 
     // Boost for exact matches
     if (fileName === 'CLAUDE.md' && contextType === 'claude-code-cli') score += 30;
-    if (['.cursorrules', 'cursorrules'].includes(fileName) && contextType === 'cursor') score += 30;
+    if (fileName.endsWith('.mdc') && relativePath.toLowerCase().includes('.cursor/')) score += 30;
     if (fileName.startsWith('.copilotrc') && contextType === 'github-copilot') score += 25;
     if (fileName.startsWith('.windsurfrc') && contextType === 'windsurf') score += 25;
 

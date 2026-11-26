@@ -26,8 +26,8 @@ import { validateBlueprint as validateBlueprintSchema } from '../utils/schema-va
 export class PublishManager {
   constructor(projectPath) {
     this.projectPath = projectPath || process.cwd();
-    this.projectScanner = this.createProjectScanner(this.projectPath);
-    this.contextAnalyzer = this.createContextAnalyzer(this.projectPath);
+    this.projectScanner = new ProjectScanner({ projectPath: this.projectPath });
+    this.contextAnalyzer = new ProjectContextAnalyzer(this.projectPath);
 
     // Initialize clients (will be created when needed)
     this.hubClient = null;
@@ -759,65 +759,6 @@ export class PublishManager {
         title: blueprint?.title || 'Untitled Blueprint',
       },
     };
-  }
-
-  /**
-   * Create project scanner with compatibility for mocked function-style exports.
-   */
-  createProjectScanner(projectPath) {
-    const fallbackScanner = {
-      scanProject: async () => ({ files: [], directories: [] }),
-    };
-
-    if (typeof ProjectScanner !== 'function') {
-      return fallbackScanner;
-    }
-
-    try {
-      return new ProjectScanner({ projectPath });
-    } catch {
-      try {
-        const scanner = ProjectScanner({ projectPath });
-        return scanner && typeof scanner.scanProject === 'function' ? scanner : fallbackScanner;
-      } catch {
-        return fallbackScanner;
-      }
-    }
-  }
-
-  /**
-   * Create context analyzer with compatibility for mocked function-style exports.
-   */
-  createContextAnalyzer(projectPath) {
-    const fallbackAnalyzer = {
-      analyze: async () => ({
-        name: path.basename(projectPath || process.cwd()),
-        framework: 'generic',
-        language: 'javascript',
-        technologies: [],
-        architecture: 'standard',
-        patterns: [],
-        structure: { type: 'unknown' },
-        packageManager: 'npm',
-        platforms: ['claude-code', 'cursor'],
-        summary: 'Generic JavaScript project',
-      }),
-    };
-
-    if (typeof ProjectContextAnalyzer !== 'function') {
-      return fallbackAnalyzer;
-    }
-
-    try {
-      return new ProjectContextAnalyzer(projectPath);
-    } catch {
-      try {
-        const analyzer = ProjectContextAnalyzer(projectPath);
-        return analyzer && typeof analyzer.analyze === 'function' ? analyzer : fallbackAnalyzer;
-      } catch {
-        return fallbackAnalyzer;
-      }
-    }
   }
 
   /**

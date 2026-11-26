@@ -932,7 +932,7 @@ export class PatternDetector {
       }
     }
 
-    // Legacy partial match for backward compatibility (more conservative)
+    // Conservative partial match fallback
     for (const [key, analyzer] of Object.entries(analyzers)) {
       if (key.length > 2 && type.includes(key)) {
         return analyzer;

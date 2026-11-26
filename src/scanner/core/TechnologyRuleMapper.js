@@ -186,8 +186,7 @@ export class TechnologyRuleMapper {
    * Generate project signature for template matching
    */
   generateProjectSignature(analysisData, ecosystemVersion) {
-    // Handle both techStack and technologyData structure for backward compatibility
-    const techData = analysisData.techStack || analysisData.technologyData || {};
+    const techData = analysisData.techStack || {};
 
     const signature = {
       languages: techData.primaryLanguages || [],

@@ -39,7 +39,7 @@ export class UniversalFormatConverter {
   }
 
   /**
-   * Backward-compatible format detector used by legacy comprehensive tests.
+   * Detect a lightweight content format for preview and import flows.
    */
   detectFormat(content, filePath = '') {
     const lowerPath = String(filePath || '').toLowerCase();
@@ -61,7 +61,7 @@ export class UniversalFormatConverter {
   }
 
   /**
-   * Backward-compatible content validator used by legacy comprehensive tests.
+   * Validate raw content for basic structural issues.
    */
   validateFormat(content, format) {
     const errors = [];
@@ -90,7 +90,7 @@ export class UniversalFormatConverter {
   }
 
   /**
-   * Backward-compatible direct converter used by legacy comprehensive tests.
+   * Convert simple raw content between direct text formats.
    */
   async convert(sourceContent, fromFormat, toFormat) {
     const source = sourceContent ?? '';
@@ -257,7 +257,7 @@ export class UniversalFormatConverter {
     // Add source platform
     if (sourcePlatform) {
       platforms[sourcePlatform] = {
-        compatible: true,
+        enabled: true,
         ...ir.platformSpecific?.[sourcePlatform],
       };
     }
@@ -266,7 +266,7 @@ export class UniversalFormatConverter {
     const compatiblePlatforms = this.getCompatiblePlatforms(ir.type);
     for (const platform of compatiblePlatforms) {
       if (!platforms[platform]) {
-        platforms[platform] = { compatible: true };
+        platforms[platform] = { enabled: true };
       }
     }
 

@@ -39,7 +39,7 @@ export class SyncOperations {
     } catch (error) {
       spinner.fail(`Hub sync failed`);
       this.command.logWarning(`Hub error: ${error.message}`);
-      return { synced: 0, error: error.message };
+      return { synced: 0, status: 'error', error: error.message };
     }
   }
 
@@ -48,6 +48,16 @@ export class SyncOperations {
    */
   async syncBlueprintsFromHub(artifactsRoot, options, spinner) {
     const hubResult = await this.hubOps.syncBlueprints(options);
+
+    // Distinguish error / empty / ok. A non-2xx or network failure is an ERROR
+    // and must NOT be reported as "up to date".
+    if (hubResult.status === 'error') {
+      spinner.fail('Hub sync failed');
+      const message = hubResult.error || 'Hub returned an error response';
+      this.command.logWarning(`Hub error: ${message}`);
+      return { synced: 0, status: 'error', error: message };
+    }
+
     const synced = hubResult.blueprints.length;
 
     // Save Hub blueprints by kind
@@ -61,7 +71,14 @@ export class SyncOperations {
       await fs.writeFile(filePath, blueprint.content);
     }
 
-    spinner.succeed(`Synced ${synced} blueprints from Hub`);
+    // 200 with zero blueprints is genuinely-empty, distinct from an error.
+    const status = hubResult.status === 'empty' || synced === 0 ? 'empty' : 'ok';
+
+    if (status === 'empty') {
+      spinner.succeed('Hub catalog is empty');
+    } else {
+      spinner.succeed(`Synced ${synced} blueprints from Hub`);
+    }
 
     // Show change summary
     if (hubResult.changes.added.length > 0) {
@@ -71,7 +88,7 @@ export class SyncOperations {
       this.command.logInfo(`↻ ${hubResult.changes.updated.length} updated`);
     }
 
-    return { synced, changes: hubResult.changes };
+    return { synced, status, changes: hubResult.changes };
   }
 
   /**
@@ -132,7 +149,7 @@ export class SyncOperations {
     } catch (error) {
       spinner.fail(`Repository sync failed`);
       this.command.logWarning(`Repository error: ${error.message}`);
-      return { synced: 0, error: error.message };
+      return { synced: 0, status: 'error', error: error.message };
     }
   }
 
@@ -147,8 +164,10 @@ export class SyncOperations {
     await fs.mkdir(rulesDir, { recursive: true });
 
     if (remoteRules.length === 0) {
+      // fetchRuleList returns [] on connection failure AND on a genuinely empty
+      // repository. Surface as error so it is not reported as "up to date".
       spinner.fail('No blueprints found in repository or failed to connect');
-      return { synced: 0 };
+      return { synced: 0, status: 'error', error: 'No blueprints found or failed to connect' };
     }
 
     const localRules = await fs.readdir(rulesDir).catch(() => []);
@@ -190,7 +209,8 @@ export class SyncOperations {
       this.command.logInfo(`↻ ${updatedCount} updated`);
     }
 
-    return { synced: totalSynced, new: newCount, updated: updatedCount };
+    // 0 newly-synced with a non-empty remote means everything is already local.
+    return { synced: totalSynced, status: 'ok', new: newCount, updated: updatedCount };
   }
 
   /**
@@ -319,7 +339,7 @@ export class SyncOperations {
       appliedFiles.push('.vdk/config.json');
     }
 
-    // Apply rule artifacts from legacy team payload
+    // Apply top-level rule artifacts when provided
     if (teamConfig.rules) {
       await this.writeBlueprintKindFiles(blueprintsPath, 'rules', teamConfig.rules, appliedFiles);
     }

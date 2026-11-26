@@ -168,11 +168,17 @@ export class SchemaV3Migrator {
     const v3Platforms = {};
 
     for (const [platformId, v2Config] of Object.entries(v2Platforms)) {
-      if (!v2Config?.compatible) {
+      // Accept both the canonical `enabled` flag and the legacy v2 `compatible`
+      // flag from input blueprints. A platform is migrated unless it is
+      // explicitly disabled (enabled === false) or explicitly incompatible
+      // (legacy compatible === false).
+      const isEnabled = v2Config?.enabled !== false && v2Config?.compatible !== false;
+      if (!isEnabled) {
         continue;
       }
 
       v3Platforms[platformId] = {
+        enabled: true,
         components: this.inferComponents(platformId, v2Config, v2Data),
       };
     }

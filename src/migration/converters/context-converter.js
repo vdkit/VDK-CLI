@@ -54,7 +54,7 @@ export class ContextConverter {
       category: this.inferCategory(bodyContent),
       platforms: {
         'claude-code': {
-          compatible: true,
+          enabled: true,
           memory: true,
           mcpIntegration: claudeSpecific?.hasMCPReferences,
         },
@@ -70,20 +70,19 @@ export class ContextConverter {
   async convertCursor(context) {
     const { fileName, bodyContent, cursorSpecific } = context;
 
-    // .cursorrules files are typically project-wide rules
-    if (fileName === '.cursorrules' || fileName === 'cursorrules') {
+    if (fileName.endsWith('.mdc') && context.relativePath?.includes('.cursor/rules/')) {
       return this.convertToBlueprint(context, {
         category: 'core',
         scope: 'project',
         platforms: {
           cursor: {
-            compatible: true,
+            enabled: true,
             activation: 'always',
             globs: cursorSpecific?.hasFileGlobs ? this.extractGlobs(bodyContent) : ['**/*'],
             priority: 'high',
           },
           'claude-code': {
-            compatible: true,
+            enabled: true,
             memory: true,
           },
         },
@@ -94,11 +93,11 @@ export class ContextConverter {
       category: this.inferCategory(bodyContent),
       platforms: {
         cursor: {
-          compatible: true,
+          enabled: true,
           activation: 'auto-attached',
         },
         'claude-code': {
-          compatible: true,
+          enabled: true,
           memory: true,
         },
       },
@@ -123,21 +122,21 @@ export class ContextConverter {
       category: copilotSpecific?.hasSecurityRules ? 'security' : 'task',
       platforms: {
         'github-copilot': {
-          compatible: true,
+          enabled: true,
           priority: copilotSpecific?.hasSecurityRules ? 9 : 7,
           reviewType,
         },
         vscode: {
-          compatible: true,
+          enabled: true,
         },
         'vscode-insiders': {
-          compatible: true,
+          enabled: true,
         },
         vscodium: {
-          compatible: true,
+          enabled: true,
         },
         'claude-code': {
-          compatible: true,
+          enabled: true,
           memory: true,
         },
       },
@@ -156,13 +155,13 @@ export class ContextConverter {
       category: windsurfSpecific?.hasAgentRules ? 'assistant' : this.inferCategory(bodyContent),
       platforms: {
         windsurf: {
-          compatible: true,
+          enabled: true,
           mode: 'workspace',
           xmlTag: this.extractXMLTag(bodyContent),
           characterLimit: Math.max(bodyContent.length * 1.2, 1000),
         },
         'claude-code': {
-          compatible: true,
+          enabled: true,
           memory: true,
         },
       },
@@ -181,11 +180,11 @@ export class ContextConverter {
       category: this.inferCategory(bodyContent),
       platforms: {
         'claude-code': {
-          compatible: true,
+          enabled: true,
           memory: true,
         },
         cursor: {
-          compatible: true,
+          enabled: true,
           activation: 'manual',
         },
       },
@@ -204,15 +203,15 @@ export class ContextConverter {
       category: this.inferCategory(bodyContent),
       platforms: {
         'openai-codex': {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
         opencode: {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
         goose: {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
       },
@@ -231,11 +230,11 @@ export class ContextConverter {
       category: this.inferCategory(bodyContent),
       platforms: {
         'gemini-cli': {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
         'google-antigravity': {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
       },
@@ -254,11 +253,11 @@ export class ContextConverter {
       category: this.inferCategory(bodyContent),
       platforms: {
         opencode: {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
         'openai-codex': {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
       },
@@ -278,11 +277,11 @@ export class ContextConverter {
       subcategory: 'skill',
       platforms: {
         'claude-code': {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
         cline: {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
       },
@@ -303,15 +302,15 @@ export class ContextConverter {
       category: this.inferCategory(bodyContent),
       platforms: {
         acp: {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
         zed: {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
         'openai-codex': {
-          compatible: true,
+          enabled: true,
           enabled: true,
         },
       },
@@ -439,7 +438,7 @@ export class ContextConverter {
       description: 'Project-specific context and memory extracted from CLAUDE.md',
       platforms: {
         'claude-code': {
-          compatible: true,
+          enabled: true,
           memory: true,
           namespace: 'project',
         },
@@ -660,7 +659,7 @@ export class ContextConverter {
   getDefaultPlatforms() {
     return {
       'claude-code': {
-        compatible: true,
+        enabled: true,
         memory: true,
       },
     };
@@ -1027,7 +1026,7 @@ export class ContextConverter {
     if (fileName.includes('command') || context.claudeSpecific?.hasSlashCommands) {
       return 'command';
     }
-    if (fileName.includes('rule') || fileName.includes('.cursorrules')) {
+    if (fileName.includes('rule') || fileName.endsWith('.mdc')) {
       return 'rule';
     }
     if (
@@ -1103,7 +1102,7 @@ export class ContextConverter {
   getMainLocation(platform) {
     const locations = {
       'claude-code': 'CLAUDE.md',
-      cursor: '.cursorrules',
+      cursor: '.cursor/rules/main.mdc',
       'github-copilot': '.github/copilot-instructions.md',
       'gemini-cli': 'GEMINI.md',
       'openai-codex': 'AGENTS.md',
