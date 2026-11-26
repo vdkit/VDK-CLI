@@ -1,0 +1,6 @@
+# Exclude sensitive/large paths from AI context
+.env
+.env.*
+node_modules/
+dist/
+build/
