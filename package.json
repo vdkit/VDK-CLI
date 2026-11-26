@@ -61,45 +61,49 @@
     "validate": "node src/validation/validate-rules.js"
   },
   "dependencies": {
-    "@clack/prompts": "^1.1.0",
+    "@clack/prompts": "^1.7.0",
     "@octokit/rest": "^22.0.1",
-    "@vdkit/ai-context-schema": "3.0.0",
-    "acorn": "^8.16.0",
+    "@vdkit/ai-context-schema": "latest",
+    "acorn": "^8.17.0",
     "boxen": "^8.0.1",
     "chalk": "^5.6.2",
     "cli-table3": "^0.6.5",
-    "commander": "15.0.0-0",
-    "dotenv": "^17.3.1",
+    "commander": "15.0.0",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "fast-glob": "^3.3.3",
     "figures": "^6.1.0",
-    "fs-extra": "^11.3.4",
+    "fs-extra": "^11.3.6",
     "glob": "^13.0.6",
     "glob-to-regexp": "^0.4.1",
     "gradient-string": "^3.0.0",
     "gray-matter": "^4.0.3",
-    "handlebars": "^4.7.8",
-    "js-yaml": "^4.1.1",
+    "handlebars": "^4.7.9",
+    "js-yaml": "^5.2.1",
     "jscodeshift": "^17.3.0",
-    "marked": "^17.0.4",
+    "marked": "^18.0.5",
     "marked-terminal": "^7.3.0",
     "open": "^11.0.0",
-    "ora": "^9.3.0",
-    "zod": "^4.3.6"
+    "ora": "^9.4.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/node": "^26.1.0",
     "@vdkit/oxlint-plugin-blueprints": "^1.0.0",
     "@vitest/browser": "beta",
     "@vitest/coverage-v8": "beta",
     "@vitest/ui": "beta",
-    "markdownlint-cli2": "^0.21.0",
-    "oxfmt": "^0.36.0",
-    "oxlint": "^1.51.0",
+    "markdownlint-cli2": "^0.23.0",
+    "oxfmt": "^0.58.0",
+    "oxlint": "^1.73.0",
     "strip-ansi": "^7.2.0",
-    "ts-node": "^10.9.2",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.3",
     "vitest": "beta"
   },
   "engines": {
-    "node": ">=22.22.0"
-  }
+    "node": ">=24.19.0",
+    "pnpm": ">=11.20.0"
+  },
+  "packageManager": "pnpm@11.20.0"
 }
