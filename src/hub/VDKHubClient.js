@@ -19,6 +19,7 @@
 
 import chalk from 'chalk';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,7 +34,7 @@ export class VDKHubClient {
     this.baseUrl = config.hubUrl || process.env.VDK_HUB_URL || 'https://vdk.tools';
     this.apiUrl = `${this.baseUrl}/api`;
     this.apiKey = config.apiKey || process.env.VDK_HUB_API_KEY;
-    this.clientVersion = config.clientVersion || process.env.VDK_CLI_VERSION || '2.0.0';
+    this.clientVersion = config.clientVersion || process.env.VDK_CLI_VERSION || '3.0.2';
     this.timeout = config.timeout || parseInt(process.env.VDK_HUB_TIMEOUT || '30000', 10);
     this.retryAttempts =
       config.retryAttempts || parseInt(process.env.VDK_HUB_RETRY_ATTEMPTS || '3', 10);
@@ -43,6 +44,14 @@ export class VDKHubClient {
     // Authentication
     this.authTokenPath = path.join(__dirname, '..', '..', '.vdk-hub-auth');
     this.authToken = null;
+
+    // Heartbeat summary snapshot cache
+    this.heartbeatSnapshotPath =
+      config.heartbeatSnapshotPath ||
+      path.join(os.homedir(), '.vdk', 'cache', 'heartbeat-summary.v1.json');
+    this.heartbeatSnapshotTtlMs =
+      config.heartbeatSnapshotTtlMs ||
+      parseInt(process.env.VDK_HEARTBEAT_SNAPSHOT_TTL_MS || '3600000', 10);
   }
 
   // ============================================================================
@@ -101,18 +110,18 @@ export class VDKHubClient {
    * Endpoint: GET /api/cli/sync/blueprints
    */
   async syncBlueprints(since = null, options = {}) {
-    try {
+    const pageSize = options.limit ? Math.min(options.limit, 500) : 100;
+
+    const buildParams = page => {
       const params = new URLSearchParams();
 
       if (since) {
         params.set('since', since);
       }
 
-      if (options.limit) {
-        params.set('limit', Math.min(options.limit, 500).toString());
-      } else {
-        params.set('limit', '100');
-      }
+      params.set('limit', pageSize.toString());
+      params.set('pageSize', pageSize.toString());
+      params.set('page', page.toString());
 
       if (options.category) {
         params.set('category', options.category);
@@ -126,32 +135,89 @@ export class VDKHubClient {
         params.set('includeL4', 'true');
       }
 
-      const endpoint = `/cli/sync/blueprints?${params}`;
-      const data = await this.makeRequest(endpoint, {
-        method: 'GET',
-        authenticated: false, // Optional auth
-      });
+      return params;
+    };
 
-      return {
-        blueprints: data.blueprints || [],
-        lastSyncTime: data.lastSyncTime,
-        totalBlueprints: data.totalBlueprints || 0,
-        changes: data.changes || { added: [], updated: [], removed: [] },
-        metadata: data.metadata || {},
-      };
-    } catch (error) {
-      if (error instanceof VDKHubError) {
-        throw error;
+    try {
+      const allBlueprints = [];
+      const aggregatedChanges = { added: [], updated: [], removed: [] };
+      let page = 1;
+      let total = 0;
+      let lastSyncTime = null;
+      let metadata = {};
+      let hasMore = true;
+
+      // Paginate until the Hub reports there are no more pages. A non-2xx
+      // response throws a VDKHubError (handled below) and is NEVER treated as
+      // "up to date".
+      while (hasMore) {
+        const endpoint = `/cli/sync/blueprints?${buildParams(page)}`;
+        const data = await this.makeRequest(endpoint, {
+          method: 'GET',
+          authenticated: false, // Optional auth
+        });
+
+        const pageBlueprints = Array.isArray(data.blueprints) ? data.blueprints : [];
+        allBlueprints.push(...pageBlueprints);
+
+        // Support both the canonical contract field `total` and the legacy
+        // `totalBlueprints` field.
+        total =
+          typeof data.total === 'number'
+            ? data.total
+            : typeof data.totalBlueprints === 'number'
+              ? data.totalBlueprints
+              : allBlueprints.length;
+
+        if (data.changes) {
+          for (const key of ['added', 'updated', 'removed']) {
+            if (Array.isArray(data.changes[key])) {
+              aggregatedChanges[key].push(...data.changes[key]);
+            }
+          }
+        }
+
+        lastSyncTime = data.lastSyncTime ?? lastSyncTime;
+        metadata = data.metadata ?? metadata;
+
+        // Continue only while the Hub explicitly reports more pages. When
+        // hasMore is absent we treat the single page as complete.
+        hasMore = data.hasMore === true;
+        page += 1;
+
+        // Safety valve: stop if the Hub keeps reporting hasMore but returns no
+        // rows, to avoid an infinite loop.
+        if (hasMore && pageBlueprints.length === 0) {
+          break;
+        }
       }
 
-      // Network error - return empty result to allow fallback to local blueprints
+      // 200 with an empty catalog is genuinely-empty — distinct from an error.
+      const status = total === 0 && allBlueprints.length === 0 ? 'empty' : 'ok';
+
+      return {
+        status,
+        blueprints: allBlueprints,
+        lastSyncTime: lastSyncTime ?? new Date().toISOString(),
+        totalBlueprints: total,
+        total,
+        changes: aggregatedChanges,
+        metadata,
+      };
+    } catch (error) {
+      // Any failure (non-2xx VDKHubError or network error) is an ERROR, not
+      // "up to date". Surface it with an explicit error status so callers do
+      // not misreport a failed sync as empty/up-to-date.
       console.warn(chalk.yellow(`Blueprint sync failed: ${error.message}`));
       return {
+        status: 'error',
         blueprints: [],
         lastSyncTime: new Date().toISOString(),
         totalBlueprints: 0,
+        total: 0,
         changes: { added: [], updated: [], removed: [] },
         metadata: { syncType: 'failed', error: error.message },
+        error: error.message,
       };
     }
   }
@@ -178,7 +244,7 @@ export class VDKHubClient {
         packageId: normalizedData.packageId,
         downloadUrl: normalizedData.downloadUrl,
         packageType: normalizedData.packageType,
-        ruleCount: normalizedData.ruleCount, // Note: API uses 'ruleCount' not 'blueprintCount'
+        blueprintCount: normalizedData.blueprintCount,
         fileSize: normalizedData.fileSize,
         expiresAt: normalizedData.expiresAt,
         createdAt: normalizedData.createdAt,
@@ -222,7 +288,7 @@ export class VDKHubClient {
       const contentType = response.headers.get('content-type');
       const contentDisposition = response.headers.get('content-disposition');
       const packageType = response.headers.get('x-vdk-package-type');
-      const ruleCount = response.headers.get('x-vdk-rule-count');
+      const blueprintCount = response.headers.get('x-vdk-blueprint-count');
 
       let content;
       if (contentType?.includes('application/zip')) {
@@ -239,13 +305,13 @@ export class VDKHubClient {
         content,
         contentType,
         packageType,
-        ruleCount: ruleCount ? parseInt(ruleCount, 10) : undefined,
+        blueprintCount: blueprintCount ? parseInt(blueprintCount, 10) : undefined,
         fileName: this.extractFileName(contentDisposition),
         headers: {
           contentType,
           contentDisposition,
           packageType,
-          ruleCount,
+          blueprintCount,
         },
       };
     } catch (error) {
@@ -418,21 +484,36 @@ export class VDKHubClient {
    */
   async deployBlueprints(deploymentData) {
     try {
+      // Deploy is a write operation and REQUIRES authentication. Forcing
+      // authenticated:true makes the missing-token case fail fast with a clear
+      // 401 instead of an opaque server rejection.
       const data = await this.makeRequest('/deploy', {
         method: 'POST',
         body: JSON.stringify(deploymentData),
-        authenticated: false, // Optional auth
+        authenticated: true,
       });
 
       return {
         success: data.success,
         hubUrl: data.hubUrl,
         blueprintsCount: data.blueprintsCount,
-        deploymentId: data.deploymentId,
+        deploymentId: data.deploymentId ?? deploymentData.deploymentId,
         message: data.message,
       };
     } catch (error) {
       if (error instanceof VDKHubError) {
+        if (
+          error.statusCode === 401 ||
+          error.errorCode === 'AUTH_REQUIRED' ||
+          error.errorCode === 'UNAUTHORIZED'
+        ) {
+          throw new VDKHubError(
+            'Deploy requires authentication. Run `vdk` to authenticate or set VDK_HUB_API_KEY to your personal access token.',
+            401,
+            'UNAUTHORIZED',
+            false
+          );
+        }
         throw error;
       }
       throw new VDKHubError(`Deployment error: ${error.message}`, 0, 'NETWORK_ERROR', true);
@@ -538,6 +619,18 @@ export class VDKHubClient {
         }
       }
 
+      const metadata =
+        data.metadata && typeof data.metadata === 'object' && !Array.isArray(data.metadata)
+          ? data.metadata
+          : {};
+      const platforms = data.platforms || metadata.platforms || {};
+      const schemaVersion = data.schemaVersion || metadata.schemaVersion || metadata.schema_version;
+      const kind = data.kind || metadata.kind;
+      const specificityLayer =
+        data.specificityLayer || metadata.specificityLayer || metadata.specificity_layer;
+      const equivalenceOutcome =
+        data.equivalenceOutcome || metadata.equivalenceOutcome || metadata.equivalence_outcome;
+
       return {
         id: data.id || data.blueprint_id,
         slug: data.slug,
@@ -545,7 +638,19 @@ export class VDKHubClient {
         description: data.description,
         content: data.content || data.body,
         author: data.author,
-        metadata: data.metadata || data.meta || {},
+        kind,
+        schemaVersion,
+        specificityLayer,
+        equivalenceOutcome,
+        platforms,
+        metadata: {
+          ...metadata,
+          kind,
+          schemaVersion,
+          specificityLayer,
+          equivalenceOutcome,
+          platforms,
+        },
         stats: data.stats,
         created: data.created,
         updated: data.updated,
@@ -571,13 +676,6 @@ export class VDKHubClient {
   }
 
   /**
-   * Search community blueprints (alias for compatibility)
-   */
-  async searchBlueprints(criteria = {}) {
-    return this.searchCommunityBlueprints(criteria);
-  }
-
-  /**
    * Search community blueprints
    * Endpoint: GET /api/community/blueprints
    */
@@ -585,12 +683,7 @@ export class VDKHubClient {
     try {
       const params = new URLSearchParams();
 
-      if (criteria.search) {
-        // Hub API uses `q` as the canonical search query parameter.
-        // Keep `search` for backward compatibility while prioritizing `q`.
-        params.set('q', criteria.search);
-        params.set('search', criteria.search);
-      }
+      if (criteria.search) params.set('q', criteria.search);
       if (criteria.category) params.set('category', criteria.category);
       if (criteria.framework) params.set('framework', criteria.framework);
       if (criteria.platform) params.set('platform', criteria.platform);
@@ -716,6 +809,172 @@ export class VDKHubClient {
         stats: {},
         meta: {},
       };
+    }
+  }
+
+  // ============================================================================
+  // HEARTBEAT SUMMARY OPERATIONS
+  // ============================================================================
+
+  /**
+   * Get Heartbeat summary payload from Hub adapter endpoint.
+   * Endpoint: GET /api/heartbeat/summary
+   *
+   * Behavior:
+   * - tries remote fetch first
+   * - validates contract envelope (`heartbeat-summary` v1)
+   * - stores a local snapshot on success
+   * - falls back to local snapshot (including stale) on failure
+   */
+  async getHeartbeatSummary(options = {}) {
+    try {
+      const data = await this.makeRequest('/heartbeat/summary', {
+        method: 'GET',
+        authenticated: false,
+      });
+
+      const validated = this.validateHeartbeatSummaryPayload(data);
+      await this.saveHeartbeatSummarySnapshot(validated);
+      return validated;
+    } catch (error) {
+      const cached = await this.loadHeartbeatSummarySnapshot({ allowExpired: true });
+
+      if (cached) {
+        console.warn(
+          chalk.yellow(`Heartbeat summary fetch failed, using local snapshot: ${error.message}`)
+        );
+        return cached;
+      }
+
+      console.warn(chalk.yellow(`Heartbeat summary unavailable: ${error.message}`));
+      return this.buildEmptyHeartbeatSummaryPayload();
+    }
+  }
+
+  validateHeartbeatSummaryPayload(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Heartbeat summary payload is not an object');
+    }
+
+    if (payload.contract !== 'heartbeat-summary' || payload.version !== 'v1') {
+      throw new Error('Heartbeat summary payload has unsupported contract/version');
+    }
+
+    if (payload.source !== 'live' && payload.source !== 'snapshot') {
+      throw new Error('Heartbeat summary payload has invalid source field');
+    }
+
+    if (!payload.generatedAt || Number.isNaN(new Date(payload.generatedAt).getTime())) {
+      throw new Error('Heartbeat summary payload has invalid generatedAt field');
+    }
+
+    if (!payload.asOf || Number.isNaN(new Date(payload.asOf).getTime())) {
+      throw new Error('Heartbeat summary payload has invalid asOf field');
+    }
+
+    if (!Array.isArray(payload.items)) {
+      throw new Error('Heartbeat summary payload items field must be an array');
+    }
+
+    for (const item of payload.items) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw new Error('Heartbeat summary item is not an object');
+      }
+
+      if (typeof item.slug !== 'string' || item.slug.trim().length === 0) {
+        throw new Error('Heartbeat summary item has invalid slug');
+      }
+
+      if (typeof item.compositeScore !== 'number' || typeof item.momentumScore !== 'number') {
+        throw new Error('Heartbeat summary item has invalid score values');
+      }
+
+      if (
+        item.trendDirection !== 'rising' &&
+        item.trendDirection !== 'stable' &&
+        item.trendDirection !== 'declining' &&
+        item.trendDirection !== 'new' &&
+        item.trendDirection !== 'unknown'
+      ) {
+        throw new Error('Heartbeat summary item has invalid trendDirection');
+      }
+
+      if (
+        item.supportStatus !== 'native' &&
+        item.supportStatus !== 'partial' &&
+        item.supportStatus !== 'planned'
+      ) {
+        throw new Error('Heartbeat summary item has invalid supportStatus');
+      }
+
+      if (typeof item.confidence !== 'number') {
+        throw new Error('Heartbeat summary item has invalid confidence');
+      }
+
+      if (!item.asOf || Number.isNaN(new Date(item.asOf).getTime())) {
+        throw new Error('Heartbeat summary item has invalid asOf timestamp');
+      }
+    }
+
+    return payload;
+  }
+
+  buildEmptyHeartbeatSummaryPayload() {
+    const now = new Date().toISOString();
+
+    return {
+      contract: 'heartbeat-summary',
+      version: 'v1',
+      source: 'snapshot',
+      generatedAt: now,
+      asOf: now,
+      items: [],
+    };
+  }
+
+  async loadHeartbeatSummarySnapshot({ allowExpired = false } = {}) {
+    try {
+      const raw = await fs.readFile(this.heartbeatSnapshotPath, 'utf8');
+      const parsed = JSON.parse(raw);
+
+      if (!parsed || typeof parsed !== 'object') {
+        return null;
+      }
+
+      const cachedAt = parsed.cachedAt ? new Date(parsed.cachedAt).getTime() : NaN;
+      const payload = this.validateHeartbeatSummaryPayload(parsed.payload);
+
+      if (!allowExpired) {
+        if (Number.isNaN(cachedAt)) {
+          return null;
+        }
+
+        const ageMs = Date.now() - cachedAt;
+
+        if (ageMs > this.heartbeatSnapshotTtlMs) {
+          return null;
+        }
+      }
+
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  async saveHeartbeatSummarySnapshot(payload) {
+    try {
+      const snapshot = {
+        cachedAt: new Date().toISOString(),
+        payload,
+      };
+
+      await fs.mkdir(path.dirname(this.heartbeatSnapshotPath), { recursive: true, mode: 0o700 });
+      await fs.writeFile(this.heartbeatSnapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, {
+        mode: 0o600,
+      });
+    } catch (error) {
+      console.warn(chalk.yellow(`Failed to persist heartbeat summary snapshot: ${error.message}`));
     }
   }
 
@@ -983,9 +1242,10 @@ export class VDKHubClient {
       );
     }
 
+    const packageData = data.package && typeof data.package === 'object' ? data.package : data;
     const requiredStringFields = ['packageId', 'downloadUrl', 'packageType', 'expiresAt'];
     const missingFields = requiredStringFields.filter(field => {
-      const value = data[field];
+      const value = packageData[field];
       return typeof value !== 'string' || value.trim().length === 0;
     });
 
@@ -998,17 +1258,17 @@ export class VDKHubClient {
       );
     }
 
-    const normalizedRuleCount = Number(data.ruleCount);
-    if (!Number.isFinite(normalizedRuleCount) || normalizedRuleCount < 0) {
+    const normalizedBlueprintCount = Number(packageData.blueprintCount);
+    if (!Number.isFinite(normalizedBlueprintCount) || normalizedBlueprintCount < 0) {
       throw new VDKHubError(
-        'Invalid package generation response from Hub: ruleCount must be a valid number',
+        'Invalid package generation response from Hub: blueprintCount must be a valid number',
         502,
         'INVALID_RESPONSE',
         true
       );
     }
 
-    const normalizedFileSize = Number(data.fileSize);
+    const normalizedFileSize = Number(packageData.fileSize);
     if (!Number.isFinite(normalizedFileSize) || normalizedFileSize < 0) {
       throw new VDKHubError(
         'Invalid package generation response from Hub: fileSize must be a valid number',
@@ -1018,7 +1278,7 @@ export class VDKHubClient {
       );
     }
 
-    if (Number.isNaN(new Date(data.expiresAt).getTime())) {
+    if (Number.isNaN(new Date(packageData.expiresAt).getTime())) {
       throw new VDKHubError(
         'Invalid package generation response from Hub: expiresAt is not a valid date',
         502,
@@ -1028,8 +1288,8 @@ export class VDKHubClient {
     }
 
     return {
-      ...data,
-      ruleCount: normalizedRuleCount,
+      ...packageData,
+      blueprintCount: normalizedBlueprintCount,
       fileSize: normalizedFileSize,
     };
   }

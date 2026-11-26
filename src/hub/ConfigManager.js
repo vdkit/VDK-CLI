@@ -48,7 +48,7 @@ const DEFAULT_CONFIG = {
     verbose: false,
   },
   cli: {
-    version: '3.0.1',
+    version: '3.0.2',
     sessionId: null,
     logLevel: process.env.VDK_LOG_LEVEL || 'info',
     debugMode: process.env.VDK_DEBUG === 'true',

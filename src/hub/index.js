@@ -66,6 +66,7 @@ export async function quickHubOperations() {
     getCommunityBlueprint: id => hub.hubClient?.getCommunityBlueprint(id),
     searchCommunityBlueprints: criteria => hub.hubClient?.searchCommunityBlueprints(criteria),
     getTrendingBlueprints: options => hub.hubClient?.getTrendingBlueprints(options),
+    getHeartbeatSummary: options => hub.hubClient?.getHeartbeatSummary(options),
     trackCommunityBlueprintUsage: (id, usage) =>
       hub.hubClient?.trackCommunityBlueprintUsage(id, usage),
     getCommunityCategories: () => hub.hubClient?.getCommunityCategories(),
@@ -140,7 +141,7 @@ export const HUB_CONSTANTS = {
  */
 export function createUsageEvent(command, options = {}) {
   return {
-    cli_version: options.cliVersion || '3.0.1',
+    cli_version: options.cliVersion || '3.0.2',
     command: command,
     platform: process.platform,
     node_version: process.version,
@@ -157,7 +158,7 @@ export function createUsageEvent(command, options = {}) {
 
 export function createErrorEvent(command, error, options = {}) {
   return {
-    cli_version: options.cliVersion || '3.0.1',
+    cli_version: options.cliVersion || '3.0.2',
     command: command,
     error_type: error.constructor.name,
     error_message: error.message,
@@ -172,7 +173,7 @@ export function createErrorEvent(command, error, options = {}) {
 
 export function createIntegrationEvent(integrationType, action = 'detected', options = {}) {
   return {
-    cli_version: options.cliVersion || '3.0.1',
+    cli_version: options.cliVersion || '3.0.2',
     integration_type: integrationType,
     action: action,
     success: options.success !== false,
@@ -188,7 +189,7 @@ export function createIntegrationEvent(integrationType, action = 'detected', opt
  */
 export const VERSION_INFO = {
   hubApiVersion: '3.0.0',
-  cliApiVersion: '3.0.1',
+  cliApiVersion: '3.0.2',
   schemaVersion: '3.0.0',
-  compatibleCliVersions: ['3.0.0', '3.0.1'],
+  compatibleCliVersions: ['3.0.0', '3.0.1', '3.0.2'],
 };

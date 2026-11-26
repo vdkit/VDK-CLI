@@ -12,6 +12,7 @@
  * and provides a high-level API for CLI commands to use.
  */
 
+import { randomUUID } from 'node:crypto';
 import chalk from 'chalk';
 import ora from 'ora';
 import { initializeConfig } from './ConfigManager.js';
@@ -121,6 +122,22 @@ export class HubIntegration {
         category: options.category,
       });
 
+      // A non-2xx / network response is an error — do NOT update the last sync
+      // time or report success. Surface it so the CLI distinguishes error from
+      // an up-to-date catalog.
+      if (result.status === 'error') {
+        spinner.fail('Blueprint sync failed');
+        this.telemetryManager.addErrorEvent({
+          cli_version: this.getCliVersion(),
+          command: 'sync',
+          error_type: 'HubSyncError',
+          error_message: result.error || 'Hub sync returned an error response',
+          platform: process.platform,
+          session_id: this.sessionId,
+        });
+        return result;
+      }
+
       // Update last sync time
       if (result.lastSyncTime) {
         await this.configManager.updateLastSyncTime(result.lastSyncTime);
@@ -173,14 +190,18 @@ export class HubIntegration {
         throw error;
       }
 
-      // Return empty result for graceful degradation
+      // Return error result for graceful degradation. Marked as an error status
+      // so the CLI does not report a failed sync as "up to date".
       console.warn(chalk.yellow('Falling back to local blueprints'));
       return {
+        status: 'error',
         blueprints: [],
         lastSyncTime: new Date().toISOString(),
         totalBlueprints: 0,
+        total: 0,
         changes: { added: [], updated: [], removed: [] },
         metadata: { syncType: 'failed', error: error.message },
+        error: error.message,
       };
     }
   }
@@ -208,7 +229,7 @@ export class HubIntegration {
         platform: process.platform,
         execution_time_ms: Date.now() - startTime,
         success: true,
-        blueprints_generated: result.ruleCount,
+        blueprints_generated: result.blueprintCount,
         session_id: this.sessionId,
         metadata: {
           package_type: result.packageType,
@@ -217,7 +238,7 @@ export class HubIntegration {
         },
       });
 
-      spinner.succeed(`Generated package with ${result.ruleCount} blueprints`);
+      spinner.succeed(`Generated package with ${result.blueprintCount} blueprints`);
       return result;
     } catch (error) {
       spinner.fail('Package generation failed');
@@ -258,7 +279,7 @@ export class HubIntegration {
         metadata: {
           package_id: packageId,
           package_type: result.packageType,
-          rule_count: result.ruleCount,
+          blueprint_count: result.blueprintCount,
         },
       });
 
@@ -291,7 +312,12 @@ export class HubIntegration {
     const startTime = Date.now();
 
     try {
+      // Stable idempotency key for this deploy invocation. Reused on retry
+      // within the same invocation so the Hub can upsert rather than duplicate.
+      const deploymentId = options.deploymentId || randomUUID();
+
       const deploymentData = {
+        deploymentId,
         projectName: projectData.name,
         projectSignature: projectData.signature,
         team: options.team,
@@ -456,7 +482,6 @@ export class HubIntegration {
     const generationConfig = this.configManager.getGenerationConfig();
 
     return {
-      userId: options.userId,
       sessionId: this.sessionId,
       stackChoices: this.extractStackChoices(analysisData),
       languageChoices: this.extractLanguageChoices(analysisData),
@@ -545,7 +570,7 @@ export class HubIntegration {
    * Get CLI version
    */
   getCliVersion() {
-    return this.configManager?.getValue('cli.version', '3.0.1') || '3.0.1';
+    return this.configManager?.getValue('cli.version', '3.0.2') || '3.0.2';
   }
 
   /**
