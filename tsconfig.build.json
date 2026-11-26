@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "sourceMap": false,
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "types": ["node"]
+  },
+  "exclude": ["coverage", "dist", "lint", "node_modules", "scripts", "tests", "vitest.config.ts"],
+  "include": ["cli.ts", "src/**/*.js", "src/**/*.ts"]
+}

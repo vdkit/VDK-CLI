@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "allowSyntheticDefaultImports": true,
+    "checkJs": false,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "lib": ["ES2024"],
+    "module": "NodeNext",
+    "moduleDetection": "force",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2024",
+    "types": ["node", "vitest/globals"],
+    "verbatimModuleSyntax": true
+  },
+  "exclude": ["coverage", "dist", "node_modules"],
+  "include": [
+    "cli.ts",
+    "lint/**/*.ts",
+    "scripts/**/*.ts",
+    "src/commands/**/*.ts",
+    "src/scanner/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/utils/console.ts",
+    "src/utils/health-check.ts",
+    "src/utils/project-insights.ts",
+    "src/validation/check-duplicates.ts",
+    "src/validation/validate-rules.ts",
+    "tests/setup.ts",
+    "vitest.config.ts"
+  ]
+}

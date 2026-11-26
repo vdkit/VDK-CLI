@@ -19,46 +19,46 @@
     "url": "git+https://github.com/vdkit/VDK-CLI.git"
   },
   "bin": {
-    "vdk": "./cli.js"
+    "vdk": "./dist/cli.js"
   },
   "files": [
-    "cli.js",
-    "src/",
+    "dist/",
     "LICENSE",
     "README.md",
     "CHANGELOG.md"
   ],
   "type": "module",
-  "main": "cli.js",
+  "main": "./dist/cli.js",
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "echo 'No build step required'",
+    "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.build.json && node --input-type=module -e \"import { cpSync, mkdirSync } from 'node:fs'; mkdirSync('dist/src/templates/commands', { recursive: true }); cpSync('src/templates/commands/claude-code-command-template.md', 'dist/src/templates/commands/claude-code-command-template.md');\"",
     "check": "oxlint src/ && oxfmt --check src/",
-    "check-duplicates": "node src/validation/check-duplicates.js",
+    "check-duplicates": "node --import tsx src/validation/check-duplicates.ts",
     "check:fix": "oxlint --fix src/ && oxfmt --write src/",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "health-check": "node src/utils/health-check.js",
-    "insights": "node src/utils/project-insights.js",
+    "health-check": "node --import tsx src/utils/health-check.ts",
+    "insights": "node --import tsx src/utils/project-insights.ts",
     "lint": "oxlint .",
-    "lint:contracts": "oxlint --import-plugin -c .oxlintrc.json \"lint/blueprint-lint-trigger.mjs\"",
+    "lint:contracts": "oxlint --import-plugin -c .oxlintrc.json \"lint/blueprint-lint-trigger.ts\"",
     "lint:contracts:dry": "vdk-blueprints-fix --target .vdk/blueprints/rules --ext md",
     "lint:contracts:fix": "vdk-blueprints-fix --write --target .vdk/blueprints/rules --ext md",
     "lint:fix": "oxlint --fix . && oxfmt --write .",
     "lint:fix-unsafe": "oxlint --fix --fix-suggestions --fix-dangerously . && oxfmt --write .",
-    "lint:json": "oxfmt --check --no-error-on-unmatched-pattern src/schemas/*.json vdk.config.json package.json",
+    "lint:json": "oxfmt --check --no-error-on-unmatched-pattern vdk.config.json package.json",
     "lint:md": "markdownlint-cli2 '**/*.md'",
     "lint:md:fix": "markdownlint-cli2 -fix '**/*.md'",
-    "prepublishOnly": "pnpm run validate && pnpm run lint && pnpm run format:check",
-    "quality": "pnpm run lint && pnpm run lint:contracts && pnpm run format:check && pnpm run lint:md",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm run validate && pnpm run lint && pnpm run format:check",
+    "quality": "pnpm run typecheck && pnpm run lint && pnpm run lint:contracts && pnpm run format:check && pnpm run lint:md",
     "quality:fix": "pnpm run lint:contracts:fix && pnpm run lint:fix && pnpm run format && pnpm run lint:md:fix",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
     "test:watch": "vitest",
-    "validate": "node src/validation/validate-rules.js"
+    "typecheck": "tsc --noEmit",
+    "validate": "node --import tsx src/validation/validate-rules.ts"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
