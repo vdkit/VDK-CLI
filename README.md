@@ -160,7 +160,7 @@ VDK CLI includes intelligent migration capabilities to convert your existing AI 
 ### Supported Migration Sources
 
 - **Claude Code** - CLAUDE.md files and .claude/ directories
-- **Cursor** - .cursorrules and .cursor/ configurations
+- **Cursor** - `.cursor/rules/*.mdc` configurations
 - **GitHub Copilot** - .github/copilot-instructions.md and related files
 - **Windsurf** - .windsurf/ rules and configurations
 - **Generic AI** - Various AI assistant rule formats
@@ -418,7 +418,7 @@ cd my-existing-project
 
 # Check what AI contexts are detected
 vdk status
-# Found: CLAUDE.md, .cursorrules, .github/copilot-instructions.md
+# Found: CLAUDE.md, .cursor/rules/project.mdc, .github/copilot-instructions.md
 
 # Preview migration without creating files
 vdk migrate --dry-run
@@ -510,8 +510,8 @@ We welcome contributions! Please see our [Contributing Guide](./CONTRIBUTING.md)
 <path d="M20 18c1.1 0 1.99-.9 1.99-2L22 5c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2H0c0 1.1.9 2 2 2h20c1.1 0 2-.9 2-2h-4zM4 5h16v11H4V5zm8 14c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z" fill="#6B7280"/>
 </svg>
 
-- **Node.js**: >= 22.0.0
-- **npm**: >= 8.0.0 or **pnpm** >= 7.0.0
+- **Node.js**: >= 24.19.0
+- **npm**: >= 8.0.0 or **pnpm** >= 11.20.0
 - **Operating System**: Windows, macOS, Linux
 
 ## License

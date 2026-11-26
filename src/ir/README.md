@@ -10,7 +10,7 @@ Source Platform → IR (Universal) → Target Platform(s)
 
 ## Architecture
 
-```
+```tree
 VDK-CLI/src/ir/
 ├── types.js                  # Core IR type definitions and validation
 ├── index.js                  # Platform parsers (Claude, Cursor, Copilot, Windsurf)
